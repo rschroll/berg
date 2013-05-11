@@ -122,10 +122,17 @@ class Epub(zipfile.ZipFile):
 
 class EpubServer(HTTPServer):
     
-    def __init__(self, *args):
+    def __init__(self, *args, **kw):
+        """Arguments are passed to HTTPServer.
+        
+        Valid named arguments:
+            debug   Enable logging of requests and replies (default: True).
+        
+        """
         HTTPServer.__init__(self, *args)
         self.epub = None
         self.keep_running = True
+        self.log = kw.get('log', True)
     
     def run(self):
         while self.keep_running:
@@ -218,6 +225,10 @@ class EpubHandler(BaseHTTPRequestHandler):
                 return mimetypes.types_map[ext.lower()]
             except KeyError:
                 return 'application/octet-stream'
+    
+    def log_message(self, *args):
+        if self.server.log:
+            BaseHTTPRequestHandler.log_message(self, *args)
 
 
 if __name__ == '__main__':

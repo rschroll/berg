@@ -91,7 +91,8 @@ class EpubReader(Gtk.ApplicationWindow):
         self.add_accel_group(self.ui_manager.get_accel_group())
     
     def spawn_server(self):
-        self.server = epubserver.EpubServer(('localhost', 0), epubserver.EpubHandler)
+        self.server = epubserver.EpubServer(('localhost', 0), epubserver.EpubHandler,
+                                            log=self.application.debug)
         self.port = self.server.server_port
         self.thread = threading.Thread(target=self.server.run)
         self.thread.start()

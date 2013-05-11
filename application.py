@@ -1,6 +1,21 @@
 import os
 from gi.repository import Gtk, Gio
+from optparse import OptionParser
 from epubreader import EpubReader
+
+class NoExitParser(OptionParser):
+    
+    def __init__(self, *args, **kw):
+        OptionParser.__init__(self, *args, **kw)
+        self.exit_status = None
+    
+    def exit(self, status=0, msg=None):
+        if msg:
+            sys.stderr.write(msg)
+        self.exit_status = status
+    
+    def check_values(self, values, args):
+        return (values, args, self.exit_status)
 
 class Application(Gtk.Application):
     
@@ -12,7 +27,6 @@ class Application(Gtk.Application):
         self.connect('command-line', self.command_line)
     
     def startup(self, data=None):
-        print "Startup"
         for name, callback in (('open', self.on_open), ('quit', self.on_quit)):
             action = Gio.SimpleAction(name=name)
             action.connect('activate', callback)
@@ -42,8 +56,17 @@ class Application(Gtk.Application):
         self.set_app_menu(builder.get_object('app-menu'))
     
     def command_line(self, application, command_line):
-        print "Command Line"
-        for arg in command_line.get_arguments()[1:]:
+        parser = NoExitParser(usage="Usage", description="Description", version="version")
+        parser.add_option('-d', '--debug', action='store_true', default=False,
+                          help='print debugging information')
+        
+        options, args, exit_status = parser.parse_args(command_line.get_arguments()[1:])
+        if exit_status != None:
+            print "Should exit with status", exit_status
+            return 0
+        
+        self.debug = options.debug
+        for arg in args:
             if os.path.isfile(arg):
                 self.load_file(arg)
         
@@ -91,4 +114,7 @@ class Application(Gtk.Application):
 if __name__ == '__main__':
     import sys
     app = Application()
+    app.register(None)
+    if app.get_is_remote():
+        print "Already running"
     app.run(sys.argv)
