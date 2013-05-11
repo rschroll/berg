@@ -52,17 +52,13 @@ class EpubReader(Gtk.Window):
         self.connect('destroy', self.on_quit)
         self.set_default_size(300,400)
         
-        vbox = Gtk.VBox()
-        topbar = self.establish_actions()
-        vbox.pack_start(topbar, False, False, 0)
+        self.establish_actions()
         sw = Gtk.ScrolledWindow()
         sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         self.view = DNDWebView()
         self.view.connect('drag-drop', self.on_drag_drop)
-        #self.enable_dnd()
         sw.add(self.view)
-        vbox.pack_start(sw, True, True, 0)
-        self.add(vbox)
+        self.add(sw)
         
         self.show_all()
         
@@ -76,38 +72,23 @@ class EpubReader(Gtk.Window):
                 ('open',    Gtk.STOCK_OPEN,     "_Open EPUB",   "<control>o", None, self.on_open),
                 ('quit',    Gtk.STOCK_QUIT,     "Quit",         "<control>w", None, self.on_quit),
                 ('prefs',   Gtk.STOCK_PREFERENCES,  "Preferences", None, None, self.on_prefs),
-                ('prevp',   Gtk.STOCK_GO_BACK,  "Previous Page", None, None, self.page_back),
-                ('nextp',   Gtk.STOCK_GO_FORWARD, "Next Page", None, None, self.page_forward),
-                ('reload', Gtk.STOCK_REFRESH,  "Refresh",      "<control>r", None, self.on_reload)
+                ('reload',  Gtk.STOCK_REFRESH,  "Refresh",      "<control>r", None, self.on_reload)
         ))
         
-        ui_manager = Gtk.UIManager()
-        ui_manager.insert_action_group(action_group)
-        ui_manager.add_ui_from_string('''
+        # Note: ui_manager must be property of self, or accelerators don't work.  This is probably
+        # because it would be garbage collected otherwise.
+        self.ui_manager = Gtk.UIManager()
+        self.ui_manager.insert_action_group(action_group)
+        self.ui_manager.add_ui_from_string('''
                 <ui>
-                    <toolbar name="topbar" action="toolbar">
-                        <toolitem action="prevp"/>
-                        <toolitem action="nextp"/>
-                        <separator/>
-                        <toolitem action="open"/>
-                        <toolitem action="prefs"/>
-                        <toolitem action="reload"/>
-                    </toolbar>
                     <accelerator action="open"/>
                     <accelerator action="quit"/>
                     <accelerator action="reload"/>
                 </ui>
         ''')
         
-        ui_manager.ensure_update()
-        self.add_accel_group(ui_manager.get_accel_group())
-        return ui_manager.get_widget('/topbar')
-    
-    def enable_dnd(self):
-        self.view.connect('drag-data-received', self.on_drag_data_received)
-        self.view.connect('drag-drop', self.on_drag_drop)
-        self.view.connect('drag-motion', self.on_drag_motion)
-        self.view.connect('drag-leave', self.on_drag_leave)
+        self.ui_manager.ensure_update()
+        self.add_accel_group(self.ui_manager.get_accel_group())
     
     def spawn_server(self):
         self.server = epubserver.EpubServer(('localhost', 0), epubserver.EpubHandler)
@@ -149,30 +130,13 @@ class EpubReader(Gtk.Window):
             self.load_file_lazy(filename)
         dialog.destroy()
     
-    def on_drag_data_received(self, widget, drag_context, x, y, data, info, time):
-        print "Drag datrec", data.get_text(), info
-        #Gtk.drag_finish(drag_context, False, False, time)
-    
     def on_drag_drop(self, widget, context, x, y, time, data=None):
         filename = self.view.dnd_data
         if filename.startswith('file://'):
             filename = filename[7:]
         self.load_file_lazy(filename)
     
-    def on_drag_motion(self, *args):
-        print "Motion!", args
-        return False
-    
-    def on_drag_leave(self, *args):
-        print "Drag leave"
-    
     def on_prefs(self, *args):
-        pass
-    
-    def page_back(self, *args):
-        pass
-    
-    def page_forward(self, *args):
         pass
     
     def on_reload(self, *args):
