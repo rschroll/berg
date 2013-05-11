@@ -42,15 +42,19 @@ class DNDWebView(WebKit.WebView):
     def do_drag_leave(self, context, time, user_data=None):
         self.accept_dnd = NONE
 
-class EpubReader(Gtk.Window):
+class EpubReader(Gtk.ApplicationWindow):
     
-    def __init__(self, filename=""):
-        Gtk.Window.__init__(self)
+    def __init__(self, application, filename=""):
+        Gtk.ApplicationWindow.__init__(self, application=application,
+                                       default_width=450, default_height=600)
+        self.application = application
         self.load_file_lazy(filename)
         
-        self.set_title("Epub Reader")
+        self.set_title("Berg")
+        # Work-around for application title
+        # http://stackoverflow.com/questions/9324163/how-to-set-application-title-in-gnome-shell
+        self.set_wmclass("Berg", "Berg")
         self.connect('destroy', self.on_quit)
-        self.set_default_size(300,400)
         
         self.establish_actions()
         sw = Gtk.ScrolledWindow()
@@ -63,13 +67,10 @@ class EpubReader(Gtk.Window):
         self.show_all()
         
         self.spawn_server()
-        
-        Gtk.main()
     
     def establish_actions(self):
         action_group = Gtk.ActionGroup('main')
         action_group.add_actions((
-                ('open',    Gtk.STOCK_OPEN,     "_Open EPUB",   "<control>o", None, self.on_open),
                 ('quit',    Gtk.STOCK_QUIT,     "Quit",         "<control>w", None, self.on_quit),
                 ('prefs',   Gtk.STOCK_PREFERENCES,  "Preferences", None, None, self.on_prefs),
                 ('reload',  Gtk.STOCK_REFRESH,  "Refresh",      "<control>r", None, self.on_reload)
@@ -81,7 +82,6 @@ class EpubReader(Gtk.Window):
         self.ui_manager.insert_action_group(action_group)
         self.ui_manager.add_ui_from_string('''
                 <ui>
-                    <accelerator action="open"/>
                     <accelerator action="quit"/>
                     <accelerator action="reload"/>
                 </ui>
@@ -101,7 +101,6 @@ class EpubReader(Gtk.Window):
             urllib2.urlopen("http://localhost:%s/.halt" % self.port).read()
         except urllib2.URLError:
             pass
-        Gtk.main_quit()
         self.thread.join(2)
         if self.thread.isAlive():
             print "Server thread won't die!"
@@ -110,39 +109,16 @@ class EpubReader(Gtk.Window):
         GLib.idle_add(self.load_file, filename)
     
     def load_file(self, filename):
-        if self.server.epub:
-            EpubReader(filename)
-        else:
-            self.view.load_uri("http://localhost:%i/?%s" % (self.port, filename))
-    
-    def on_open(self, *args):
-        dialog = Gtk.FileChooserDialog("Open...", self, Gtk.FileChooserAction.OPEN,
-                                       (Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-                                        Gtk.STOCK_OPEN, Gtk.ResponseType.OK))
-        for name, pattern in (('Epub Files', '*.epub'), ('All Files', '*')):
-            filt = Gtk.FileFilter()
-            filt.set_name(name)
-            filt.add_pattern(pattern)
-            dialog.add_filter(filt)
-        response = dialog.run()
-        if response == Gtk.ResponseType.OK:
-            filename = dialog.get_filename()
-            self.load_file_lazy(filename)
-        dialog.destroy()
+        self.view.load_uri("http://localhost:%i/?%s" % (self.port, filename))
     
     def on_drag_drop(self, widget, context, x, y, time, data=None):
         filename = self.view.dnd_data
         if filename.startswith('file://'):
             filename = filename[7:]
-        self.load_file_lazy(filename)
+        self.application.load_file(filename)
     
     def on_prefs(self, *args):
         pass
     
     def on_reload(self, *args):
         self.view.reload()
-        
-
-if __name__ == '__main__':
-    import sys
-    EpubReader(*sys.argv[1:])
