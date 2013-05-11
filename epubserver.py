@@ -137,11 +137,9 @@ class EpubHandler(BaseHTTPRequestHandler):
         parsed_path = urlparse.urlparse(self.path)
         path = parsed_path.path[1:]  # strip leading /
         if path == '.halt':
-            self.server.keep_running = False
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write("Good-bye")
-            return
+            return self.halt()
+        if path == '.bookdata.js':
+            return self.book_data()
         if path.startswith('.'):
             return self.static(path[1:])
         if path == '':
@@ -152,6 +150,21 @@ class EpubHandler(BaseHTTPRequestHandler):
         if path in self.server.epub.namelist():
             return self.from_epub(path)
         self.send_error(404)
+    
+    def halt(self):
+        self.server.keep_running = False
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write("Good-bye")
+    
+    def book_data(self):
+        if not self.server.epub:
+            self.send_error(404)
+            return
+        
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write("var bookData = %s" % self.server.epub.book_data)
     
     def index(self, epub_path):
         if epub_path:
@@ -164,16 +177,15 @@ class EpubHandler(BaseHTTPRequestHandler):
                 self.server.epub = None
                 return
         
-        self.send_response(200)
-        self.end_headers()
         if self.server.epub:
-            self.wfile.write(open('index.html').read() % self.server.epub.book_data)
+            self.static('index.html')
         else:
-            self.wfile.write(LOAD_HTML)
+            self.static('load.html')
     
     def static(self, path):
+        resource_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
         try:
-            f = open(path, 'rb')
+            f = open(os.path.join(resource_dir, path), 'rb')
         except IOError:
             self.send_error(404)
             return
@@ -206,105 +218,7 @@ class EpubHandler(BaseHTTPRequestHandler):
                 return mimetypes.types_map[ext.lower()]
             except KeyError:
                 return 'application/octet-stream'
-    
-INDEX_HTML = '''<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
 
-<script src=".js/monocore.js"></script>
-<script src=".js/monoctrl.js"></script>
-<link rel="stylesheet" type="text/css" href=".css/monocore.css" />
-<link rel="stylesheet" type="text/css" href=".css/monoctrl.css" />
-<style type="text/css">
-div#reader {
-    /*width: 300px;
-    height: 400px;
-    border: 1px solid black;*/
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 0;
-    bottom: 0;
-}
-div.monelem_page {
-    bottom: 0;
-    right: 0;
-}
-div.monelem_sheaf {
-    top: 5%%;
-    left: 10%%;
-    right: 10%%;
-    bottom: 10%%;
-}
-</style>
-</head>
-
-<body>
-<div id="reader">This is the reader.
-<script>
-var bookData = %s;
-function createBookTitle(reader, contactListeners) {
-    var bt = {}
-    bt.createControlElements = function () {
-        cntr = document.createElement('div');
-        cntr.className = "bookTitle";
-        runner = document.createElement('div');
-        runner.className = "runner";
-        runner.innerHTML = reader.getBook().getMetaData('title');
-        cntr.appendChild(runner);
-        if (contactListeners) {
-            Monocle.Events.listenForContact(cntr, contactListeners);
-        }
-        return cntr;
-    }
-    reader.addControl(bt, 'page');
-    return bt;
-}
-Monocle.Reader('reader', bookData, { flipper: Monocle.Flippers.Instant,
-                                     panels: Monocle.Panels.Magic},
-               function (reader) {
-                    var stencil = new Monocle.Controls.Stencil(reader);
-                    reader.addControl(stencil);
-                    var toc = new Monocle.Controls.Contents(reader);
-                    reader.addControl(toc, 'popover', {hidden: true});
-                    createBookTitle(reader, {start: function () { reader.showControl(toc); } });
-               });
-</script>
-</div>
-</body>
-</html>
-'''
-LOAD_HTML = '''<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-
-<style type="text/css">
-body {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    border: 10px dashed #aaa;
-    border-radius: 20px;
-}
-div {
-    margin: 35% 10%;
-    color: #aaa;
-    text-align: center;
-    font-size: 20pt;
-    font-weight: bold;
-}
-</style>
-</head>
-
-<body>
-<div>Drop file here</div>
-</body>
-</html>
-'''
 
 if __name__ == '__main__':
     import webbrowser
