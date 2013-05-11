@@ -221,7 +221,13 @@ class EpubHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
+    import sys
     import webbrowser
+    
+    if len(sys.argv) == 1:
+        print "Pass the path the the EPUB file as the first argument"
+        raise SystemExit
+    
     server = EpubServer(('localhost', 8080), EpubHandler)
-    webbrowser.open('http://localhost:8080')
+    webbrowser.open('http://localhost:8080/?%s' % os.path.abspath(sys.argv[1]))
     server.run()
