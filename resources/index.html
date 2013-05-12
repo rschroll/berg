@@ -46,9 +46,9 @@ function setupReader(reader) {
 }
 
 $(document).ready(function () {
-    Monocle.Reader('reader', bookData,
-                   {flipper: Monocle.Flippers.Instant, panels: Monocle.Panels.Magic},
-                   setupReader);
+    reader = Monocle.Reader('reader', bookData,
+                            {flipper: Monocle.Flippers.Instant, panels: Monocle.Panels.Magic},
+                            setupReader);
 });
 </script>
 

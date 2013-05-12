@@ -55,6 +55,7 @@ class EpubReader(Gtk.ApplicationWindow):
         # http://stackoverflow.com/questions/9324163/how-to-set-application-title-in-gnome-shell
         self.set_wmclass("Berg", "Berg")
         self.connect('destroy', self.on_quit)
+        self.connect('key-press-event', self.on_key_press)
         
         self.establish_actions()
         sw = Gtk.ScrolledWindow()
@@ -71,9 +72,9 @@ class EpubReader(Gtk.ApplicationWindow):
     def establish_actions(self):
         action_group = Gtk.ActionGroup('main')
         action_group.add_actions((
-                ('quit',    Gtk.STOCK_QUIT,     "Quit",         "<control>w", None, self.on_quit),
-                ('prefs',   Gtk.STOCK_PREFERENCES,  "Preferences", None, None, self.on_prefs),
-                ('reload',  Gtk.STOCK_REFRESH,  "Refresh",      "<control>r", None, self.on_reload)
+                ('quit',    Gtk.STOCK_QUIT,         "Quit",         "<control>w", None, self.on_quit),
+                ('prefs',   Gtk.STOCK_PREFERENCES,  "Preferences",  None,         None, self.on_prefs),
+                ('reload',  Gtk.STOCK_REFRESH,      "Refresh",      "<control>r", None, self.on_reload)
         ))
         
         # Note: ui_manager must be property of self, or accelerators don't work.  This is probably
@@ -123,3 +124,18 @@ class EpubReader(Gtk.ApplicationWindow):
     
     def on_reload(self, *args):
         self.view.reload()
+    
+    def on_key_press(self, widget, event):
+        # Check that none of Shift, Control, Alt are pressed
+        if ((Gdk.ModifierType.SHIFT_MASK | Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.MOD1_MASK)
+                & event.state) == 0:
+            if event.keyval in (Gdk.KEY_Right, Gdk.KEY_Down, Gdk.KEY_space, Gdk.KEY_period):
+                self.change_page(1)
+                return True
+            if event.keyval in (Gdk.KEY_Left, Gdk.KEY_Up, Gdk.KEY_BackSpace, Gdk.KEY_comma):
+                self.change_page(-1)
+                return True
+        return False
+    
+    def change_page(self, direction=1):
+        self.view.execute_script('reader.moveTo({direction: %i})' % direction)
