@@ -49,6 +49,7 @@ $(document).ready(function () {
     reader = Monocle.Reader('reader', bookData,
                             {flipper: Monocle.Flippers.Instant, panels: Monocle.Panels.Magic},
                             setupReader);
+    document.title = bookData.getMetaData('title');
 });
 </script>
 

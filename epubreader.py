@@ -64,6 +64,7 @@ class EpubReader(Gtk.ApplicationWindow):
         self.view.connect('drag-drop', self.on_drag_drop)
         sw.add(self.view)
         self.add(sw)
+        self.view.connect('title-changed', self.on_title_changed)
         
         self.show_all()
         
@@ -136,6 +137,9 @@ class EpubReader(Gtk.ApplicationWindow):
                 self.change_page(-1)
                 return True
         return False
+    
+    def on_title_changed(self, web_view, frame, title):
+        self.set_title(title)
     
     def change_page(self, direction=1):
         self.view.execute_script('reader.moveTo({direction: %i})' % direction)
