@@ -116,5 +116,15 @@ class Application(Gtk.Application):
 
 if __name__ == '__main__':
     import sys
+    
+    # From https://github.com/MicahCarrick/python-bloatpad
+    old_hook = sys.excepthook
+    def new_hook(etype, evalue, etb):
+        old_hook(etype, evalue, etb)
+        while Gtk.main_level():
+            Gtk.main_quit()
+        sys.exit()
+    sys.excepthook = new_hook
+    
     app = Application()
     app.run(sys.argv[1:])
