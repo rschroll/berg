@@ -57,6 +57,9 @@ class EpubReader(Gtk.ApplicationWindow):
         self.set_wmclass("Berg", "Berg")
         self.connect('destroy', self.on_quit)
         self.connect('key-press-event', self.on_key_press)
+        self.connect('configure-event', self.on_configure)
+        self._size = (0, 0)
+        self._resize_timeout = None
         
         self.establish_actions()
         sw = Gtk.ScrolledWindow()
@@ -142,6 +145,16 @@ class EpubReader(Gtk.ApplicationWindow):
                 self.change_page(-1)
                 return True
         return False
+    
+    def on_configure(self, widget, event):
+        if self._size == (event.width, event.height):
+            return
+        
+        self._size = (event.width, event.height)
+        if self._resize_timeout is not None:
+            GObject.source_remove(self._resize_timeout)
+        self._resize_timeout = GObject.timeout_add(500,
+                lambda *args: self.view.execute_script('reader.resized();'))
     
     def on_title_changed(self, web_view, frame, title):
         self.set_title(title)
