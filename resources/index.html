@@ -17,17 +17,8 @@ function createTopControls(reader, contactListeners) {
             page = $('<span class="pageCount">1/2</span>'),
             settings = $('<span class="settings"><a href="settings://">Settings</a></span>');
         
-        settings.click(function (e) { settings.css('color', 'red'); });
-        
-        panel.append(contents); panel.append(page).append(settings).hide();
+        panel.append(contents).append(page).append(settings);
         hoverRegion.append(panel);
-        hoverRegion.hover(
-            function (e) {
-                panel.slideDown();
-            },
-            function (e) {
-                panel.slideUp();
-            });
         if (contactListeners) {
             Monocle.Events.listenForContact(contents[0], contactListeners);
         }
@@ -90,6 +81,10 @@ div.hoverTop {
     z-index: 5;
 }
 div.panelTop {
+    position: relative;
+    top: -2em;
+    transition: top 0.2s ease;
+    -webkit-transition: top 0.2s ease;
     background: #EEE;
     border: 2px solid #F7F7F7;
     border-top: none;
@@ -99,6 +94,9 @@ div.panelTop {
     box-shadow: 1px 2px 6px rgba(0,0,0,0.5);
     padding: 0.5em 1em;
     text-align: center;
+}
+div.hoverTop:hover div.panelTop {
+    top: 0;
 }
 span.contents {
     float: left;
