@@ -3,6 +3,7 @@ import urllib2
 import threading
 import socket
 import epubserver
+from readersettings import ReaderSettings
 GObject.threads_init()
 
 NONE, WAITING, ACCEPT, REJECT = range(4)
@@ -65,6 +66,10 @@ class EpubReader(Gtk.ApplicationWindow):
         sw.add(self.view)
         self.add(sw)
         self.view.connect('title-changed', self.on_title_changed)
+        self.view.connect('navigation-policy-decision-requested', self.on_navigation_policy_decision_requested)
+        self.view.connect('console-message', self.on_console_message)
+        
+        self.settings = ReaderSettings(self)
         
         self.show_all()
         
@@ -74,7 +79,7 @@ class EpubReader(Gtk.ApplicationWindow):
         action_group = Gtk.ActionGroup('main')
         action_group.add_actions((
                 ('quit',    Gtk.STOCK_QUIT,         "Quit",         "<control>w", None, self.on_quit),
-                ('prefs',   Gtk.STOCK_PREFERENCES,  "Preferences",  None,         None, self.on_prefs),
+                ('settings',Gtk.STOCK_PREFERENCES,  "Settings",     None,         None, self.on_settings),
                 ('reload',  Gtk.STOCK_REFRESH,      "Refresh",      "<control>r", None, self.on_reload)
         ))
         
@@ -120,8 +125,8 @@ class EpubReader(Gtk.ApplicationWindow):
             filename = filename[7:]
         self.application.load_file(filename)
     
-    def on_prefs(self, *args):
-        pass
+    def on_settings(self, *args):
+        self.settings.show()
     
     def on_reload(self, *args):
         self.view.reload()
@@ -140,6 +145,19 @@ class EpubReader(Gtk.ApplicationWindow):
     
     def on_title_changed(self, web_view, frame, title):
         self.set_title(title)
+    
+    def on_navigation_policy_decision_requested(self, web_view, frame, request, navigation, policy_decision):
+        if request.get_uri() == 'settings://':
+            policy_decision.ignore()
+            self.on_settings()
+            return True
+        return False
+    
+    def on_console_message(self, web_view, message, line, source_id):
+        if message == 'Ready':
+            self.settings.update_styles()
+            return True
+        return not self.application.debug
     
     def change_page(self, direction=1):
         self.view.execute_script('reader.moveTo({direction: %i})' % direction)

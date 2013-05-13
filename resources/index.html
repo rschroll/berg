@@ -15,7 +15,7 @@ function createTopControls(reader, contactListeners) {
             panel = $('<div class="panelTop"></div>'),
             contents = $('<span class="contents">TOC</span>'),
             page = $('<span class="pageCount">1/2</span>'),
-            settings = $('<span class="settings">set</span>');
+            settings = $('<span class="settings"><a href="settings://">Settings</a></span>');
         
         settings.click(function (e) { settings.css('color', 'red'); });
         
@@ -43,11 +43,28 @@ function setupReader(reader) {
     var toc = new Monocle.Controls.Contents(reader);
     reader.addControl(toc, 'popover', {hidden: true});
     createTopControls(reader, {start: function () { reader.showControl(toc); } });
+    
+    console.log('Ready');
+}
+
+function updateStyles(textColor, backgroundColor, font, lineHeight, defaultFont, fontScale,
+                      marginTop, marginLeft, marginRight, marginBottom) {
+    var iframeCSS = 'body { color: ' + textColor + '; ';
+    if (!defaultFont)
+        iframeCSS += 'font: ' + font + '; line-height: ' + lineHeight + '; ';
+    iframeCSS += '}';
+    reader.formatting.updatePageStyles(reader.formatting.properties.initialStyles, iframeCSS, true);
+    reader.formatting.setFontScale(fontScale, true);
+    var page = $('.monelem_page')[0];
+    $(page).css('background', backgroundColor);
+    var sheaf = $('.monelem_sheaf')[0];
+    $(sheaf).css({top: marginTop+'%', left: marginLeft+'%', right: marginRight+'%', bottom: marginBottom+'%'});
 }
 
 $(document).ready(function () {
     reader = Monocle.Reader('reader', bookData,
-                            {flipper: Monocle.Flippers.Instant, panels: Monocle.Panels.Magic},
+                            {flipper: Monocle.Flippers.Instant, panels: Monocle.Panels.Magic,
+                            stylesheet: 'body { color: black; }'}, // CSS for restyling to work
                             setupReader);
     document.title = bookData.getMetaData('title');
 });
@@ -66,12 +83,6 @@ div#reader {
 div.monelem_page {
     bottom: 0;
     right: 0;
-}
-div.monelem_sheaf {
-    top: 5%;
-    left: 10%;
-    right: 10%;
-    bottom: 10%;
 }
 div.hoverTop {
     height: 3em;
