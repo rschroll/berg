@@ -43,12 +43,11 @@ class ReaderSettings(object):
         self._margin_left = builder.get_object('margin-left-button')
         self._margin_right = builder.get_object('margin-right-button')
         self._margin_bottom = builder.get_object('margin-bottom-button')
+        self._updating = False
         
         settings = self.DEFAULT_SETTINGS.copy()
         settings.update(kw)
-        self._updating = True
         self.dict = settings
-        self._updating = False
     
     @property
     def background_color(self):
@@ -157,9 +156,11 @@ class ReaderSettings(object):
         return d
     @dict.setter
     def dict(self, value):
+        self._updating = True
         for k in value:
             if k in self.DEFAULT_SETTINGS:
                 setattr(self, k, value[k])
+        self._updating = False
     
     def update_styles(self, *args):
         if not self._updating:
@@ -182,6 +183,10 @@ class ReaderSettings(object):
         value = widget.get_value()
         widget.set_text('%d%%' % value)
         return True
+    
+    def restore_defaults(self, *args):
+        self.dict = self.DEFAULT_SETTINGS
+        self.update_styles()
     
     def on_close(self, *args):
         self.dialog.hide()
