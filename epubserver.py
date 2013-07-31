@@ -142,7 +142,7 @@ class EpubHandler(BaseHTTPRequestHandler):
     
     def do_GET(self):
         parsed_path = urlparse.urlparse(self.path)
-        path = parsed_path.path[1:]  # strip leading /
+        path = urlparse.unquote(parsed_path.path[1:])  # strip leading /
         if path == '.halt':
             return self.halt()
         if path == '.bookdata.js':
@@ -150,7 +150,7 @@ class EpubHandler(BaseHTTPRequestHandler):
         if path.startswith('.'):
             return self.static(path[1:])
         if path == '':
-            return self.index(parsed_path.query)
+            return self.index(urlparse.unquote(parsed_path.query))
         if self.server.epub is None:
             self.send_error(500, "Epub not loaded")
             return
