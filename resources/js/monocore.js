@@ -7,7 +7,7 @@
 
 
 Monocle = {
-  VERSION: "2.3.1"
+  VERSION: "3.2.0"
 };
 
 
@@ -70,7 +70,9 @@ Monocle.Env = function () {
     Monocle.defer(removeTestFrame);
 
     if (typeof surveyCallback == "function") {
-      surveyCallback(API);
+      var fn = surveyCallback;
+      surveyCallback = null;
+      fn(API);
     }
   }
 
@@ -252,7 +254,8 @@ Monocle.Env = function () {
           'MozPerspective',
           'OPerspective',
           'msPerspective'
-        ])
+        ]) &&
+        !Monocle.Browser.renders.slow // Some older browsers can't be trusted.
       );
     }],
 
@@ -275,17 +278,14 @@ Monocle.Env = function () {
     // CHECK OUT OUR CONTEXT
 
     // Does the device have a MobileSafari-style touch interface?
+    // (Here we can now simply follow the wisdom of Gala.)
     //
-    ["touch", function () {
-      result(
-        ('ontouchstart' in window) ||
-        css.supportsMediaQueryProperty('touch-enabled')
-      );
-    }],
+    ["touch", function () { result(Gala.Pointers.ENV.noMouse); }],
+
 
     // Is the Reader embedded, or in the top-level window?
     //
-    ["embedded", function () { result(top != self) }],
+    ["embedded", function () { result(top != window.self) }],
 
 
     // TEST FOR CERTAIN RENDERING OR INTERACTION BUGS
@@ -305,7 +305,7 @@ Monocle.Env = function () {
     //
     ["floatsIgnoreColumns", function () {
       if (!Monocle.Browser.is.WebKit) { return result(false); }
-      match = navigator.userAgent.match(/AppleWebKit\/([\d\.]+)/);
+      var match = navigator.userAgent.match(/AppleWebKit\/([\d\.]+)/);
       if (!match) { return result(false); }
       return result(match[1] < "534.30");
     }],
@@ -450,8 +450,15 @@ Monocle.Env = function () {
     //
     ['offscreenRenderingClipped', function () {
       result(Monocle.Browser.iOSVersionBelow('6'));
-    }]
+    }],
 
+
+    // Gecko is better at loading content with document.write than with
+    // javascript: URLs. With the latter, it tends to put cruft in history,
+    // and gets confused by <base>.
+    ['loadHTMLWithDocWrite', function () {
+      result(Monocle.Browser.is.Gecko || Monocle.Browser.is.Opera);
+    }]
   ];
 
 
@@ -637,7 +644,7 @@ if (typeof window.console == "undefined") {
 window.console.compatDir = function (obj) {
   var stringify = function (o) {
     var parts = [];
-    for (x in o) {
+    for (var x in o) {
       parts.push(x + ": " + o[x]);
     }
     return parts.join(";\n");
@@ -663,7 +670,7 @@ window.console.deprecation = function (msg) {
 // A convenient alias for setTimeout that assumes 0 if no timeout is specified.
 //
 Monocle.defer = function (fn, time) {
-  if (fn && typeof fn == "function") {
+  if (typeof fn == "function") {
     return setTimeout(fn, time || 0);
   }
 }
@@ -686,7 +693,7 @@ Monocle.Browser.is = {
   Opera: Monocle.Browser.uaMatch('Opera'),
   WebKit: Monocle.Browser.uaMatch(/Apple\s?WebKit/),
   Gecko: Monocle.Browser.uaMatch('Gecko') && !Monocle.Browser.uaMatch('KHTML'),
-  MobileSafari: Monocle.Browser.uaMatch(/AppleWebKit.*Mobile/)
+  MobileSafari: Monocle.Browser.uaMatch(/OS \d_.*AppleWebKit.*Mobile/)
 }
 
 
@@ -719,6 +726,7 @@ Monocle.Browser.on = {
   BlackBerry: Monocle.Browser.uaMatch('BlackBerry'),
   Android: (
     Monocle.Browser.uaMatch('Android') ||
+    Monocle.Browser.uaMatch('Silk') ||
     Monocle.Browser.uaMatch(/Linux;.*EBRD/) // Sony Readers
   ),
   MacOSX: (
@@ -752,10 +760,18 @@ Monocle.Browser.iOSVersionBelow = function (strOrNum) {
 //
 // FIXME: These tests are too opinionated. Replace with more targeted tests.
 //
-Monocle.Browser.renders = {
-  eInk: Monocle.Browser.on.Kindle3,
-  slow: Monocle.Browser.on.Android || Monocle.Browser.on.Blackberry
-}
+Monocle.Browser.renders = (function () {
+  var ua = navigator.userAgent;
+  var caps = {};
+  caps.eInk = Monocle.Browser.on.Kindle3;
+  caps.slow = (
+    caps.eInk ||
+    (Monocle.Browser.on.Android && !ua.match(/Chrome/)) ||
+    Monocle.Browser.on.Blackberry ||
+    ua.match(/NintendoBrowser/)
+  );
+  return caps;
+})();
 
 
 // A helper class for sniffing CSS features and creating CSS rules
@@ -780,6 +796,475 @@ Monocle.Browser.survey = function (callback) {
   }
 }
 ;
+Gala = {}
+
+
+// Register an event listener.
+//
+Gala.listen = function (elem, evtType, fn, useCapture) {
+  elem = Gala.$(elem);
+  if (elem.addEventListener) {
+    elem.addEventListener(evtType, fn, useCapture || false);
+  } else if (elem.attachEvent) {
+    if (evtType.indexOf(':') < 1) {
+      elem.attachEvent('on'+evtType, fn);
+    } else {
+      var h = (Gala.IE_REGISTRATIONS[elem] = Gala.IE_REGISTRATIONS[elem] || {});
+      var a = (h[evtType] = h[evtType] || []);
+      a.push(fn);
+    }
+  }
+}
+
+
+// Remove an event listener.
+//
+Gala.deafen = function (elem, evtType, fn, useCapture) {
+  elem = Gala.$(elem);
+  if (elem.removeEventListener) {
+    elem.removeEventListener(evtType, fn, useCapture || false);
+  } else if (elem.detachEvent) {
+    if (evtType.indexOf(':') < 1) {
+      elem.detachEvent('on'+evtType, fn);
+    } else {
+      var h = (Gala.IE_REGISTRATIONS[elem] = Gala.IE_REGISTRATIONS[elem] || {});
+      var a = (h[evtType] = h[evtType] || []);
+      for (var i = 0, ii = a.length; i < ii; ++i) {
+        if (a[i] == fn) { a.splice(i, 1); }
+      }
+    }
+  }
+}
+
+
+// Fire an event on the element.
+//
+// The data supplied to this function will be available in the event object in
+// the 'm' property -- eg, alert(evt.m) --> 'foo'
+//
+Gala.dispatch = function (elem, evtType, data, cancelable) {
+  elem = Gala.$(elem);
+  var evt;
+  if (elem.dispatchEvent) {
+    evt = document.createEvent('Events');
+    evt.initEvent(evtType, false, cancelable || false);
+    evt.m = data;
+    return elem.dispatchEvent(evt);
+  } else if (elem.attachEvent && evtType.indexOf(':') >= 0) {
+    if (!Gala.IE_REGISTRATIONS[elem]) { return true; }
+    var evtHandlers = Gala.IE_REGISTRATIONS[elem][evtType];
+    if (!evtHandlers || evtHandlers.length < 1) { return true; }
+    evt = {
+      type: evtType,
+      currentTarget: elem,
+      target: elem,
+      m: data,
+      defaultPrevented: false,
+      preventDefault: function () { evt.defaultPrevented = true; }
+    }
+    var q, processQueue = Gala.IE_INVOCATION_QUEUE.length === 0;
+    for (var i = 0, ii = evtHandlers.length; i < ii; ++i) {
+      q = { elem: elem, evtType: evtType, handler: evtHandlers[i], evt: evt }
+      Gala.IE_INVOCATION_QUEUE.push(q);
+    }
+    if (processQueue) {
+      while (q = Gala.IE_INVOCATION_QUEUE.shift()) {
+        //console.log("IE EVT on %s: '%s' with data: %s", q.elem, q.evtType, q.evt.m);
+        q.handler(q.evt);
+      }
+    }
+    return !(cancelable && evt.defaultPrevented);
+  } else {
+    console.warn('[GALA] Cannot dispatch non-namespaced events: '+evtType);
+    return true;
+  }
+}
+
+
+// Prevents the browser-default action on an event and stops it from
+// propagating up the DOM tree.
+//
+Gala.stop = function (evt) {
+  evt = evt || window.event;
+  if (evt.preventDefault) { evt.preventDefault(); }
+  if (evt.stopPropagation) { evt.stopPropagation(); }
+  evt.returnValue = false;
+  evt.cancelBubble = true;
+  return false;
+}
+
+
+// Add a group of listeners, which is just a hash of { evtType: callback, ... }
+//
+Gala.listenGroup = function (elem, listeners, useCapture) {
+  for (var evtType in listeners) {
+    Gala.listen(elem, evtType, listeners[evtType], useCapture || false);
+  }
+}
+
+
+// Remove a group of listeners.
+//
+Gala.deafenGroup = function (elem, listeners, useCapture) {
+  for (var evtType in listeners) {
+    Gala.deafen(elem, evtType, listeners[evtType], useCapture || false);
+  }
+}
+
+
+// Replace a group of listeners with another group, re-using the same
+// 'listeners' object -- a common pattern.
+//
+Gala.replaceGroup = function (elem, listeners, newListeners, useCapture) {
+  Gala.deafenGroup(elem, listeners, useCapture || false);
+  for (var evtType in listeners) { delete listeners[evtType]; }
+  for (evtType in newListeners) { listeners[evtType] = newListeners[evtType]; }
+  Gala.listenGroup(elem, listeners, useCapture || false);
+  return listeners;
+}
+
+
+// Listen for a tap or a click event.
+//
+// Returns a 'listener' object that can be passed to Gala.deafenGroup().
+//
+// If 'tapClass' is undefined, it defaults to 'tapping'. If it is a blank
+// string, no class is assigned.
+//
+Gala.onTap = function (elem, fn, tapClass) {
+  elem = Gala.$(elem);
+  // Throttle the invocation to prevent double firing of the event in envs
+  // that support touch and mouse. Particularly in Firefox and Chrome on IE 8,
+  // a mouse event and touch events are both fired.
+  // Ref https://github.com/joseph/Monocle/pull/216#issuecomment-21424427
+  fn = Gala.throttle(fn, 100);
+
+  if (typeof tapClass == 'undefined') { tapClass = Gala.TAPPING_CLASS; }
+
+  var tapStartingCoords = {};
+
+  // If the tap extends beyond a few pixels, it's no longer a tap.
+  var tapIsValid = function (evt) {
+    var cur = Gala.Cursor(evt);
+    var xDelta = Math.abs(cur.pageX - tapStartingCoords.x);
+    var yDelta = Math.abs(cur.pageY - tapStartingCoords.y);
+    var maxContact = Math.max(xDelta, yDelta);
+    return Gala.TAP_MAX_CONTACT_DISTANCE >= maxContact;
+  }
+
+  // This ensures the element is considered 'clickable' by browsers
+  // like on the Kindle 3.
+  var noopOnClick = function (listeners) {
+    Gala.listen(elem, 'click', listeners.click = fns.noop);
+  }
+
+  var fns = {
+    start: function (evt) {
+      var cur = Gala.Cursor(evt);
+      tapStartingCoords = { x: cur.pageX, y: cur.pageY };
+      if (tapClass) { elem.classList.add(tapClass); }
+    },
+    move: function (evt) {
+      if (!tapStartingCoords) { return; }
+      if (!tapIsValid(evt)) { fns.cancel(evt); }
+    },
+    end: function (evt) {
+      if (!tapStartingCoords) { return; }
+      fns.cancel(evt);
+      evt.currentTarget = evt.currentTarget || evt.srcElement;
+      fn(evt);
+    },
+    noop: function () {},
+    cancel: function () {
+      if (!tapStartingCoords) { return; }
+      tapStartingCoords = null;
+      if (tapClass) { elem.classList.remove(tapClass); }
+    }
+  };
+  Gala.listen(window, Gala.CONTACT_CANCEL, fns.cancel);
+  return Gala.onContact(elem, fns, false, noopOnClick);
+}
+
+
+// Register a series of functions to listen for the start, move, end
+// events of a mouse or touch interaction.
+//
+// 'fns' argument is an object like:
+//
+//   {
+//     'start': function () { ... },
+//     'move': function () { ... },
+//     'end': function () { ... },
+//     'cancel': function () { ... }
+//   }
+//
+// All of the functions in this object are optional.
+//
+// Returns an object that can later be passed to Gala.deafenGroup.
+//
+Gala.onContact = function (elem, fns, useCapture, initCallback) {
+  elem = Gala.$(elem);
+
+  var isLeftClick = function (evt) {
+    return evt[evt.which == 'undefined' ? 'button' : 'which'] < 2;
+  }
+
+  var isSingleTouch = function (evt) {
+    return !!(evt.touches && evt.touches.length < 2);
+  }
+
+  var wrapContact = function (fn) {
+    return function (evt) {
+      if (Gala.Pointers.enabled()) { Gala.Pointers.trackPointers(evt); }
+      var doCallFunc = (Gala.Pointers.isSinglePointer() ||
+        isSingleTouch(evt) ||
+        isLeftClick(evt));
+      if (doCallFunc) { fn(evt); }
+    }
+  }
+
+  var buildListeners = function (opts) {
+    var types = Gala.getEventTypes();
+
+    var listeners = {};
+    var evtTypes = ['start', 'move', 'end', 'cancel'];
+    for (var i = 0, ii = evtTypes.length; i < ii; ++i) {
+      var type = evtTypes[i];
+      if (opts[type]) {
+        var thisEvtTypes = types[type].split(' ');
+        for (var j = 0, jj = thisEvtTypes.length; j < jj; ++j) {
+          listeners[thisEvtTypes[j]] = wrapContact(opts[type]);
+        }
+      }
+    }
+    return listeners;
+  }
+
+  var listeners = buildListeners(fns);
+
+  Gala.listenGroup(elem, listeners);
+  if (typeof initCallback == 'function') { initCallback(listeners); }
+  return listeners;
+}
+
+// Support for pointer events
+// http://msdn.microsoft.com/en-us/library/ie/hh673557(v=vs.85).aspx
+// http://www.w3.org/Submission/pointer-events/
+// Primary target of this functionality is windows 8, surface, etc
+//
+Gala.Pointers = {
+  pointers: {},
+
+
+  enabled: function () { return Gala.Pointers.ENV.pointer },
+
+  // Track pointer events
+  //
+  trackPointers: function (evt) {
+    var types = Gala.getEventTypes(),
+    endEvents = types.end.slice().concat(types.cancel);
+
+    // if we have an end event, I'm not sure it makes sense to only clear the
+    // single pointer that sent the end event. I think it makes sense to
+    // clear all pointers...I think it's kind of an edge case.
+    if (endEvents.indexOf(evt.type)) {
+      this.reset();
+    } else {
+      this.pointers[evt.pointerId] = evt;
+    }
+  },
+
+
+  // This follows the same logic as touches. To be valid, there
+  // is less than two.
+  //
+  isSinglePointer: function () {
+    return !!(this.enabled() && this.count() < 2);
+  },
+
+
+  // Get count of currently tracked pointers
+  //
+  count: function () {
+    // This method only exists in IE > 8 but that's ok because this code only
+    // applies to versions of IE > 8;
+    return Object.keys ? Object.keys(this.pointers).length : 0;
+  },
+
+
+  // Reset the pointers
+  //
+  reset: function () {
+    this.pointers = {};
+  }
+}
+
+Gala.Pointers.ENV = {
+  // Is the Pointer Events specification implemented?
+  // http://www.w3.org/Submission/pointer-events/
+  // Not sure how I feel about this spec but it makes sense to unify
+  // the events into a single interface to be used as needed. - DS
+  //
+  pointer: (function () {
+    return !!(navigator.pointerEnabled || navigator.msPointerEnabled)
+  })(),
+
+
+  // Does the system support a mouse
+  // This is required to identify touch devices that do not support
+  // a mouse interface. This is used because mouse events are still fired
+  // from mobile devices.
+  //
+  // This may need updated when Android desktops come out but hopefully
+  // everyone will just adopt the pointer spec.
+  //
+  noMouse: (function () {
+    var mobileRegex = /mobile|tablet|ip(ad|hone|od)|android|silk/i;
+    return (
+      ('ontouchstart' in window) &&
+      !!navigator.userAgent.match(mobileRegex)
+    );
+  })()
+}
+
+// Get Event Types that are used to bind the different event concepts
+// start, move, end, cancel. This method helps normalize event binding and
+// prevent improper event listening, etc
+//
+Gala.getEventTypes = function () {
+  var types;
+
+  if (Gala.Pointers.enabled()) {
+    // Microsoft screwing stuff up with pointers
+    // http://www.w3.org/TR/pointerevents/
+    types = [
+      'pointerdown MSPointerDown',
+      'pointermove MSPointerMove',
+      'pointerup MSPointerUp',
+      'pointercancel MSPointerCancel'
+    ];
+  } else if (Gala.Pointers.ENV.noMouse) {
+    types = [
+      'touchstart',
+      'touchmove',
+      'touchend',
+      'touchcancel'
+    ];
+  } else {
+    types = [
+      'touchstart mousedown',
+      'touchmove mousemove',
+      'touchend mouseup',
+      'touchcancel'
+    ];
+  }
+
+  return {
+    start: types[0],
+    move: types[1],
+    end: types[2],
+    cancel: types[3]
+  };
+}
+
+
+// The Gala.Cursor object provides more detail coordinates for the contact
+// event, and normalizes differences between touch and mouse coordinates.
+//
+// If you have a contact event listener, you can get the coordinates for it
+// with:
+//
+//    var cursor = new Gala.Cursor(evt);
+//
+Gala.Cursor = function (evt) {
+  var API = { constructor: Gala.Cursor }
+
+
+  function initialize() {
+    var ci =
+      evt.type.match(/mouse|pointer/i) ? evt :
+      ['touchstart', 'touchmove'].indexOf(evt.type) >= 0 ? evt.targetTouches[0] :
+      ['touchend', 'touchcancel'].indexOf(evt.type) >= 0 ? evt.changedTouches[0] :
+      null;
+
+    // Basic coordinates (provided by the event).
+    API.pageX = ci.pageX;
+    API.pageY = ci.pageY;
+    API.clientX = ci.clientX;
+    API.clientY = ci.clientY;
+    API.screenX = ci.screenX;
+    API.screenY = ci.screenY;
+    API.event = evt;
+
+    // Coordinates relative to the target element for the event.
+    var tgt = API.target = evt.target || evt.srcElement;
+    while (tgt.nodeType != 1 && tgt.parentNode) { tgt = tgt.parentNode; }
+    assignOffsetFor(tgt, 'offset');
+
+    // Coordinates relative to the element that the event was registered on.
+    var registrant = evt.currentTarget;
+    if (registrant && typeof registrant.offsetLeft != 'undefined') {
+      assignOffsetFor(registrant, 'registrant');
+    }
+  }
+
+
+  function assignOffsetFor(elem, attr) {
+    var r;
+    if (elem.getBoundingClientRect) {
+      var er = elem.getBoundingClientRect();
+      var dr = document.documentElement.getBoundingClientRect();
+      r = { left: er.left - dr.left, top: er.top - dr.top }
+    } else {
+      r = { left: elem.offsetLeft, top: elem.offsetTop }
+      while (elem = elem.offsetParent) {
+        if (elem.offsetLeft || elem.offsetTop) {
+          r.left += elem.offsetLeft;
+          r.top += elem.offsetTop;
+        }
+      }
+    }
+    API[attr+'X'] = API.pageX - r.left;
+    API[attr+'Y'] = API.pageY - r.top;
+  }
+
+
+  initialize();
+
+  return API;
+}
+
+
+// A little utility to dereference ids into elements. You've seen this before.
+//
+Gala.$ = function (elem) {
+  if (typeof elem == 'string') { elem = document.getElementById(elem); }
+  return elem;
+}
+
+Gala.throttle = function (func, wait) {
+  var previous = 0;
+
+  return function () {
+    var now = new Date();
+    var remaining = wait - (now - previous);
+    if (remaining <= 0) {
+      previous = now;
+      func.apply(this, arguments);
+    }
+  }
+}
+
+
+
+
+// CONSTANTS
+//
+Gala.TAPPING_CLASS = 'tapping';
+Gala.IE_REGISTRATIONS = {};
+Gala.IE_INVOCATION_QUEUE = [];
+Gala.CONTACT_CANCEL = "gala:contact:cancel";
+Gala.TAP_MAX_CONTACT_DISTANCE = 10;
 // A shortcut for creating a bookdata object from a 'data' hash.
 //
 // eg:
@@ -913,7 +1398,7 @@ Monocle.Factory = function (element, label, index, reader) {
   //
   // Returns the created element.
   //
-  function make(tagName, oLabel, index_or_options, or_options) {
+  function make(tagName, oLabel, indexOrOptions, orOptions) {
     var oIndex, options;
     if (arguments.length == 1) {
       oLabel = null,
@@ -955,7 +1440,7 @@ Monocle.Factory = function (element, label, index, reader) {
   // Creates an element by passing all the given arguments to make. Then
   // appends the element as a child of the current element.
   //
-  function append(tagName, oLabel, index_or_options, or_options) {
+  function append(tagName, oLabel, indexOrOptions, orOptions) {
     var oElement = make.apply(this, arguments);
     p.element.appendChild(oElement);
     return oElement;
@@ -1038,295 +1523,40 @@ Monocle.Factory = function (element, label, index, reader) {
 Monocle.Events = {};
 
 
-// Fire a custom event on a given target element. The attached data object will
-// be available to all listeners at evt.m.
-//
-// Internet Explorer does not permit custom events; we'll wait for a
-// version of IE that supports the W3C model.
-//
-Monocle.Events.dispatch = function (elem, evtType, data, cancelable) {
-  if (!document.createEvent) {
-    return true;
-  }
-  var evt = document.createEvent("Events");
-  evt.initEvent(evtType, false, cancelable || false);
-  evt.m = data;
-  try {
-    return elem.dispatchEvent(evt);
-  } catch(e) {
-    console.warn("Failed to dispatch event: "+evtType);
-    return false;
-  }
+Monocle.Events.wrapper = function (fn) {
+  return function (evt) { evt.m = new Gala.Cursor(evt); fn(evt); }
 }
 
 
-// Register a function to be invoked when an event fires.
-//
-Monocle.Events.listen = function (elem, evtType, fn, useCapture) {
-  if (typeof elem == "string") { elem = document.getElementById(elem); }
-  return elem.addEventListener(evtType, fn, useCapture || false);
+Monocle.Events.listen = Gala.listen;
+
+
+Monocle.Events.deafen =  Gala.deafen;
+
+
+Monocle.Events.dispatch = Gala.dispatch;
+
+
+Monocle.Events.listenForTap = function (elem, fn, tapClass) {
+  return Gala.onTap(elem, Monocle.Events.wrapper(fn), tapClass);
 }
 
 
-// De-register a function from an event.
-//
-Monocle.Events.deafen = function (elem, evtType, fn, useCapture) {
-  if (typeof elem == "string") { elem = document.getElementById(elem); }
-  return elem.removeEventListener(evtType, fn, useCapture || false);
-}
+Monocle.Events.deafenForTap = Gala.deafenGroup;
 
 
-// Register a series of functions to listen for the start, move, end
-// events of a mouse or touch interaction.
-//
-// 'fns' argument is an object like:
-//
-//   {
-//     'start': function () { ... },
-//     'move': function () { ... },
-//     'end': function () { ... },
-//     'cancel': function () { ... }
-//   }
-//
-// All of the functions in this object are optional.
-//
-// Each function is passed the event, with additional generic info about the
-// cursor/touch position:
-//
-//    event.m.offsetX (& offsetY) -- relative to top-left of the element
-//                                   on which the event fired
-//    event.m.registrantX (& registrantY) -- relative to top-left of element
-//                                           on which the event is listening
-//
-// 'options' argument:
-//
-//   {
-//     'useCapture': true/false
-//   }
-//
-// Returns an object that can later be passed to Monocle.Events.deafenForContact
-//
 Monocle.Events.listenForContact = function (elem, fns, options) {
-  var listeners = {};
-
-  var cursorInfo = function (evt, ci) {
-    evt.m = {
-      pageX: ci.pageX,
-      pageY: ci.pageY,
-      clientX: ci.clientX,
-      clientY: ci.clientY,
-      screenX: ci.screenX,
-      screenY: ci.screenY
-    };
-
-    var target = evt.target || evt.srcElement;
-    while (target.nodeType != 1 && target.parentNode) {
-      target = target.parentNode;
-    }
-
-    // The position of contact from the top left of the element
-    // on which the event fired.
-    var offset = offsetFor(evt, target);
-    evt.m.offsetX = offset[0];
-    evt.m.offsetY = offset[1];
-
-    // The position of contact from the top left of the element
-    // on which the event is listening.
-    if (
-      evt.currentTarget &&
-      typeof evt.currentTarget.offsetLeft != 'undefined'
-    ) {
-      offset = offsetFor(evt, evt.currentTarget);
-      evt.m.registrantX = offset[0];
-      evt.m.registrantY = offset[1];
-    }
-
-    return evt;
+  options = options || { useCapture: false };
+  var wrappers = {};
+  for (var evtType in fns) {
+    wrappers[evtType] = Monocle.Events.wrapper(fns[evtType]);
   }
-
-
-  var offsetFor = function (evt, elem) {
-    var r;
-    if (elem.getBoundingClientRect) {
-      // Why subtract documentElement position? It's always zero, right?
-      // Nope, not on Android when zoomed in.
-      var dr = document.documentElement.getBoundingClientRect();
-      var er = elem.getBoundingClientRect();
-      r = { left: er.left - dr.left, top: er.top - dr.top };
-    } else {
-      r = { left: elem.offsetLeft, top: elem.offsetTop }
-      while (elem = elem.offsetParent) {
-        if (elem.offsetLeft || elem.offsetTop) {
-          r.left += elem.offsetLeft;
-          r.top += elem.offsetTop;
-        }
-      }
-    }
-    return [evt.m.pageX - r.left, evt.m.pageY - r.top];
-  }
-
-
-  var capture = (options && options.useCapture) || false;
-
-  if (!Monocle.Browser.env.touch) {
-    if (fns.start) {
-      listeners.mousedown = function (evt) {
-        if (evt.button != 0) { return; }
-        fns.start(cursorInfo(evt, evt));
-      }
-      Monocle.Events.listen(elem, 'mousedown', listeners.mousedown, capture);
-    }
-    if (fns.move) {
-      listeners.mousemove = function (evt) {
-        fns.move(cursorInfo(evt, evt));
-      }
-      Monocle.Events.listen(elem, 'mousemove', listeners.mousemove, capture);
-    }
-    if (fns.end) {
-      listeners.mouseup = function (evt) {
-        fns.end(cursorInfo(evt, evt));
-      }
-      Monocle.Events.listen(elem, 'mouseup', listeners.mouseup, capture);
-    }
-    if (fns.cancel) {
-      listeners.mouseout = function (evt) {
-        obj = evt.relatedTarget || evt.fromElement;
-        while (obj && (obj = obj.parentNode)) {
-          if (obj == elem) { return; }
-        }
-        fns.cancel(cursorInfo(evt, evt));
-      }
-      Monocle.Events.listen(elem, 'mouseout', listeners.mouseout, capture);
-    }
-  } else {
-    if (fns.start) {
-      listeners.touchstart = function (evt) {
-        if (evt.touches.length > 1) { return; }
-        fns.start(cursorInfo(evt, evt.targetTouches[0]));
-      }
-    }
-    if (fns.move) {
-      listeners.touchmove = function (evt) {
-        if (evt.touches.length > 1) { return; }
-        fns.move(cursorInfo(evt, evt.targetTouches[0]));
-      }
-    }
-    if (fns.end) {
-      listeners.touchend = function (evt) {
-        fns.end(cursorInfo(evt, evt.changedTouches[0]));
-      }
-    }
-    if (fns.cancel) {
-      listeners.touchcancel = function (evt) {
-        fns.cancel(cursorInfo(evt, evt.changedTouches[0]));
-      }
-    }
-
-    for (etype in listeners) {
-      Monocle.Events.listen(elem, etype, listeners[etype], capture);
-    }
-  }
-
-  return listeners;
+  return Gala.onContact(elem, wrappers, options.useCapture);
 }
 
 
-// The 'listeners' argument is a hash of event names and the functions that
-// are registered to them -- de-registers the functions from the events.
-//
-Monocle.Events.deafenForContact = function (elem, listeners) {
-  for (evtType in listeners) {
-    Monocle.Events.deafen(elem, evtType, listeners[evtType]);
-  }
-}
+Monocle.Events.deafenForContact = Gala.deafenGroup;
 
-
-// Looks for start/end events on an element without significant move events in
-// between. Fires on the end event.
-//
-// Also sets up a dummy click event on Kindle3, so that the elem becomes a
-// cursor target.
-//
-// If the optional activeClass string is provided, and if the element was
-// created by a Monocle.Factory, then the activeClass will be applied to the
-// element while it is being tapped.
-//
-// Returns a listeners object that you should pass to deafenForTap if you
-// need to.
-Monocle.Events.listenForTap = function (elem, fn, activeClass) {
-  var startPos;
-  var elemRect;
-
-  // On Kindle, register a noop function with click to make the elem a
-  // cursor target.
-  if (Monocle.Browser.on.Kindle3) {
-    Monocle.Events.listen(elem, 'click', function () {});
-  }
-
-  var annul = function () {
-    startPos = null;
-    if (activeClass && elem.dom) { elem.dom.removeClass(activeClass); }
-  }
-
-  var annulIfOutOfBounds = function (evt) {
-    // Do nothing if annulled.
-    if (!startPos) {
-      return;
-    }
-    // We don't have to track this nonsense for mouse events.
-    if (evt.type.match(/^mouse/)) {
-      return;
-    }
-    // Doesn't work on iOS 3.1 for some reason, so ignore for that version.
-    if (Monocle.Browser.is.MobileSafari && Monocle.Browser.iOSVersion < "3.2") {
-      return;
-    }
-    // Check whether element has changed location (due to scrolling?).
-    if (elemRect && !activeClass) {
-      var newRect = elem.getBoundingClientRect();
-      if (newRect.left != elemRect.left || newRect.top != elemRect.top) {
-        annul();
-      }
-    }
-    // Check whether contact has left the bounds of the element.
-    if (
-      evt.m.registrantX < 0 || evt.m.registrantX > elem.offsetWidth ||
-      evt.m.registrantY < 0 || evt.m.registrantY > elem.offsetHeight
-    ) {
-      annul();
-    }
-  }
-
-  return Monocle.Events.listenForContact(
-    elem,
-    {
-      start: function (evt) {
-        startPos = [evt.m.pageX, evt.m.pageY];
-        if (elem.getBoundingClientRect) {
-          elemRect = elem.getBoundingClientRect();
-        }
-        if (activeClass && elem.dom) { elem.dom.addClass(activeClass); }
-      },
-      move: annulIfOutOfBounds,
-      end: function (evt) {
-        annulIfOutOfBounds(evt);
-        if (startPos) {
-          evt.m.pageXStart = startPos[0];
-          evt.m.pageYStart = startPos[1];
-          fn(evt);
-        }
-        annul();
-      },
-      cancel: annul
-    },
-    {
-      useCapture: false
-    }
-  );
-}
-
-
-Monocle.Events.deafenForTap = Monocle.Events.deafenForContact;
 
 // Listen for the next transition-end event on the given element, call
 // the function, then deafen.
@@ -1386,12 +1616,11 @@ Monocle.Styles = {
   setX: function (elem, x) {
     var s = elem.style;
     if (typeof x == "number") { x += "px"; }
-    if (Monocle.Browser.env.supportsTransform3d) {
-      s.webkitTransform = "translate3d("+x+", 0, 0)";
-    } else {
-      s.webkitTransform = "translateX("+x+")";
-    }
-    s.MozTransform = s.OTransform = s.transform = "translateX("+x+")";
+    var val = Monocle.Browser.env.supportsTransform3d ?
+      'translate3d('+x+', 0, 0)' :
+      'translateX('+x+')';
+    val = (x == '0px') ? 'none' : val;
+    s.webkitTransform = s.MozTransform = s.OTransform = s.transform = val;
     return x;
   },
 
@@ -1399,12 +1628,11 @@ Monocle.Styles = {
   setY: function (elem, y) {
     var s = elem.style;
     if (typeof y == "number") { y += "px"; }
-    if (Monocle.Browser.env.supportsTransform3d) {
-      s.webkitTransform = "translate3d(0, "+y+", 0)";
-    } else {
-      s.webkitTransform = "translateY("+y+")";
-    }
-    s.MozTransform = s.OTransform = s.transform = "translateY("+y+")";
+    var val = Monocle.Browser.env.supportsTransform3d ?
+      'translate3d(0, '+y+', 0)' :
+      'translateY('+y+')';
+    val = (y == '0px') ? 'none' : val;
+    s.webkitTransform = s.MozTransform = s.OTransform = s.transform = val;
     return y;
   },
 
@@ -1417,7 +1645,7 @@ Monocle.Styles = {
     while (props.length && !matrix) {
       matrix = currStyle[props.shift()];
     }
-    return parseInt(matrix.match(re)[1]);
+    return parseInt(matrix.match(re)[1], 10);
   },
 
 
@@ -1556,12 +1784,12 @@ Monocle.Formatting = function (reader, optStyles, optScale) {
   /* PAGE STYLESHEETS */
 
   // API for adding a new stylesheet to all components. styleRules should be
-  // a string of CSS rules. restorePlace defaults to true.
+  // a string of CSS rules.
   //
   // Returns a sheet index value that can be used with updatePageStyles
   // and removePageStyles.
   //
-  function addPageStyles(styleRules, restorePlace) {
+  function addPageStyles(styleRules) {
     return changingStylesheet(function () {
       p.stylesheets.push(styleRules);
       var sheetIndex = p.stylesheets.length - 1;
@@ -1571,14 +1799,14 @@ Monocle.Formatting = function (reader, optStyles, optScale) {
         addPageStylesheet(cmpt.contentDocument, sheetIndex);
       }
       return sheetIndex;
-    }, restorePlace);
+    });
   }
 
 
   // API for updating the styleRules in an existing page stylesheet across
   // all components. Takes a sheet index value obtained via addPageStyles.
   //
-  function updatePageStyles(sheetIndex, styleRules, restorePlace) {
+  function updatePageStyles(sheetIndex, styleRules) {
     return changingStylesheet(function () {
       p.stylesheets[sheetIndex] = styleRules;
       if (typeof styleRules.join == "function") {
@@ -1602,14 +1830,14 @@ Monocle.Formatting = function (reader, optStyles, optScale) {
           );
         }
       }
-    }, restorePlace);
+    });
   }
 
 
   // API for removing a page stylesheet from all components. Takes a sheet
   // index value obtained via addPageStyles.
   //
-  function removePageStyles(sheetIndex, restorePlace) {
+  function removePageStyles(sheetIndex) {
     return changingStylesheet(function () {
       p.stylesheets[sheetIndex] = null;
       var i = 0, cmpt = null;
@@ -1618,7 +1846,7 @@ Monocle.Formatting = function (reader, optStyles, optScale) {
         var styleTag = doc.getElementById('monStylesheet'+sheetIndex);
         styleTag.parentNode.removeChild(styleTag);
       }
-    }, restorePlace);
+    });
   }
 
 
@@ -1626,18 +1854,10 @@ Monocle.Formatting = function (reader, optStyles, optScale) {
   // brace of custom events (stylesheetchanging/stylesheetchange), and
   // recalculates component dimensions if specified (default to true).
   //
-  function changingStylesheet(callback, restorePlace) {
-    restorePlace = (restorePlace === false) ? false : true;
-    if (restorePlace) {
-      dispatchChanging();
-    }
+  function changingStylesheet(callback) {
+    dispatchChanging();
     var result = callback();
-    if (restorePlace) {
-      p.reader.recalculateDimensions(true);
-      Monocle.defer(dispatchChange);
-    } else {
-      p.reader.recalculateDimensions(false);
-    }
+    p.reader.recalculateDimensions(true, dispatchChange);
     return result;
   }
 
@@ -1693,29 +1913,23 @@ Monocle.Formatting = function (reader, optStyles, optScale) {
 
   /* FONT SCALING */
 
-  function setFontScale(scale, restorePlace) {
+  function setFontScale(scale) {
     p.fontScale = scale;
-    if (restorePlace) {
-      dispatchChanging();
-    }
+    dispatchChanging();
     var i = 0, cmpt = null;
     while (cmpt = p.reader.dom.find('component', i++)) {
       adjustFontScaleForDoc(cmpt.contentDocument, scale);
     }
-    if (restorePlace) {
-      p.reader.recalculateDimensions(true);
-      dispatchChange();
-    } else {
-      p.reader.recalculateDimensions(false);
-    }
+    p.reader.recalculateDimensions(true, dispatchChange);
   }
 
 
   function adjustFontScaleForDoc(doc, scale) {
+    var j, jj;
     var elems = doc.getElementsByTagName('*');
     if (scale) {
       scale = parseFloat(scale);
-      if (!doc.pfsSwept) {
+      if (!doc.body.pfsSwept) {
         sweepElements(doc, elems);
       }
 
@@ -1723,7 +1937,7 @@ Monocle.Formatting = function (reader, optStyles, optScale) {
       // font-size. If a proportional font sizing is already applied to
       // the element, update existing cssText, otherwise append new cssText.
       //
-      for (var j = 0, jj = elems.length; j < jj; ++j) {
+      for (j = 0, jj = elems.length; j < jj; ++j) {
         var newFs = fsProperty(elems[j].pfsOriginal, scale);
         if (elems[j].pfsApplied) {
           replaceFontSizeInStyle(elems[j], newFs);
@@ -1732,10 +1946,10 @@ Monocle.Formatting = function (reader, optStyles, optScale) {
         }
         elems[j].pfsApplied = scale;
       }
-    } else if (doc.pfsSwept) {
+    } else if (doc.body.pfsSwept) {
       // Iterate over each element, removing proportional font-sizing flag
       // and property from cssText.
-      for (var j = 0, jj = elems.length; j < jj; ++j) {
+      for (j = 0, jj = elems.length; j < jj; ++j) {
         if (elems[j].pfsApplied) {
           var oprop = elems[j].pfsOriginalProp;
           var opropDec = oprop ? 'font-size: '+oprop+' ! important;' : '';
@@ -1759,7 +1973,7 @@ Monocle.Formatting = function (reader, optStyles, optScale) {
       elems[i].pfsOriginal = fs;
       elems[i].pfsOriginalProp = elems[i].style.fontSize;
     }
-    doc.pfsSwept = true;
+    doc.body.pfsSwept = true;
   }
 
 
@@ -1800,14 +2014,21 @@ Monocle.Formatting.DEFAULT_STYLE_RULES = [
     "width: 100% !important;" +
     "position: absolute !important;" +
     "-webkit-text-size-adjust: none;" +
+    "-ms-touch-action: none;" +
+    "-ms-content-zooming: none;" +
+    "-ms-content-zoom-chaining: chained;" +
+    "-ms-content-zoom-limit-min: 100%;" +
+    "-ms-content-zoom-limit-max: 100%;" +
+    "-ms-touch-select: none;" +
   "}",
   "html#RS\\:monocle body * {" +
     "max-width: 100% !important;" +
   "}",
-  "html#RS\\:monocle img, html#RS\\:monocle video, html#RS\\:monocle object {" +
+  "html#RS\\:monocle img, html#RS\\:monocle video, html#RS\\:monocle object, html#RS\\:monocle svg {" +
     "max-height: 95% !important;" +
     "height: auto !important;" +
-  "}"
+  "}",
+  "a:not([href]) { color: inherit; }"
 ]
 ;
 // READER
@@ -1902,7 +2123,7 @@ Monocle.Reader = function (node, bookData, options, onLoadCallback) {
 
     if (!Monocle.Browser.env.isCompatible()) {
       if (dispatchEvent("monocle:incompatible", {}, true)) {
-        API.billboard.show(k.SUPPORT_URL, { closeButton: false });
+        fatalSystemMessage(k.COMPATIBILITY_INFO);
       }
       return;
     }
@@ -1933,6 +2154,8 @@ Monocle.Reader = function (node, bookData, options, onLoadCallback) {
       options.fontScale
     );
 
+    listen('monocle:turn', onPageTurn);
+
     primeFrames(options.primeURL, function () {
       // Make the reader elements look pretty.
       applyStyles();
@@ -1940,7 +2163,6 @@ Monocle.Reader = function (node, bookData, options, onLoadCallback) {
       p.flipper.listenForInteraction(options.panels);
 
       setBook(bk, options.place, function () {
-        p.initialized = true;
         if (onLoadCallback) { onLoadCallback(API); }
         dispatchEvent("monocle:loaded", API);
       });
@@ -1965,7 +2187,7 @@ Monocle.Reader = function (node, bookData, options, onLoadCallback) {
 
   function attachFlipper(flipperClass) {
     if (!flipperClass) {
-      if (Monocle.Browser.renders.eInk || Monocle.Browser.renders.slow) {
+      if (Monocle.Browser.renders.slow) {
         flipperClass = Monocle.Flippers.Instant;
       } else {
         flipperClass = Monocle.Flippers.Slider;
@@ -2063,7 +2285,12 @@ Monocle.Reader = function (node, bookData, options, onLoadCallback) {
           dispatchEvent('monocle:firstcomponentchange', evt.m);
           return (pageCount += 1) == p.flipper.pageCount;
         },
+        'monocle:componentfailed': function (evt) {
+          fatalSystemMessage(k.LOAD_FAILURE_INFO);
+          return true;
+        },
         'monocle:turn': function (evt) {
+          deafen('monocle:componentfailed', listener);
           callback();
           return true;
         }
@@ -2071,9 +2298,9 @@ Monocle.Reader = function (node, bookData, options, onLoadCallback) {
       var listener = function (evt) {
         if (watchers[evt.type](evt)) { deafen(evt.type, listener); }
       }
-      for (evtType in watchers) { listen(evtType, listener) }
+      for (var evtType in watchers) { listen(evtType, listener) }
     }
-    p.flipper.moveTo(place || { page: 1 });
+    p.flipper.moveTo(place || { page: 1 }, initialized);
   }
 
 
@@ -2082,8 +2309,16 @@ Monocle.Reader = function (node, bookData, options, onLoadCallback) {
   }
 
 
+  function initialized() {
+    p.initialized = true;
+  }
+
+
   // Attempts to restore the place we were up to in the book before the
   // reader was resized.
+  //
+  // The delay ensures that if we get multiple calls to this function in
+  // a short period, we don't do lots of expensive recalculations.
   //
   function resized() {
     if (!p.initialized) {
@@ -2094,36 +2329,65 @@ Monocle.Reader = function (node, bookData, options, onLoadCallback) {
       return;
     }
     clearTimeout(p.resizeTimer);
-    p.resizeTimer = setTimeout(
-      function () {
-        lockFrameWidths();
-        recalculateDimensions(true);
-        dispatchEvent("monocle:resize");
-      },
-      k.RESIZE_DELAY
-    );
+    p.resizeTimer = Monocle.defer(performResize, k.RESIZE_DELAY);
   }
 
 
-  function recalculateDimensions(andRestorePlace) {
-    if (!p.book) { return; }
-    dispatchEvent("monocle:recalculating");
+  function performResize() {
+    lockFrameWidths();
+    recalculateDimensions(true, afterResized);
+  }
 
-    var place, locus;
-    if (andRestorePlace !== false) {
-      var place = getPlace();
-      var locus = { percent: place ? place.percentageThrough() : 0 };
+
+  function afterResized() {
+    dispatchEvent('monocle:resize');
+  }
+
+
+  function recalculateDimensions(andRestorePlace, callback) {
+    if (!p.book) { return; }
+    if (p.onRecalculate) {
+      var oldFn = p.onRecalculate;
+      p.onRecalculate = function () {
+        oldFn();
+        if (typeof callback == 'function') { callback(); }
+      }
+      return;
     }
 
-    // Better to use an event? Or chaining consecutively?
+    dispatchEvent("monocle:recalculating");
+    p.onRecalculate = function () {
+      if (typeof callback == 'function') { callback(); }
+      p.onRecalculate = null;
+      dispatchEvent("monocle:recalculated");
+    }
+
+    var onComplete = function () { Monocle.defer(p.onRecalculate); }
+    var onInitiate = onComplete;
+    if (andRestorePlace !== false && p.lastLocus) {
+      onInitiate = function () {
+        p.flipper.moveTo(p.lastLocus, onComplete, false);
+      }
+    }
+
     forEachPage(function (pageDiv) {
       pageDiv.m.activeFrame.m.component.updateDimensions(pageDiv);
     });
 
-    Monocle.defer(function () {
-      if (locus) { p.flipper.moveTo(locus); }
-      dispatchEvent("monocle:recalculated");
-    });
+    Monocle.defer(onInitiate);
+  }
+
+
+  function onPageTurn(evt) {
+    if (p.onRecalculate) {
+    } else {
+      var place = getPlace();
+      p.lastLocus = {
+        componentId: place.componentId(),
+        percent: place.percentageThrough()
+      }
+      BIF.dispatch('monocle:position', { place: place });
+    }
   }
 
 
@@ -2170,6 +2434,7 @@ Monocle.Reader = function (node, bookData, options, onLoadCallback) {
     }
     var fn = callback;
     if (!locus.direction) {
+      dispatchEvent('monocle:turning');
       dispatchEvent('monocle:jumping', { locus: locus });
       fn = function () {
         dispatchEvent('monocle:jump', { locus: locus });
@@ -2200,6 +2465,7 @@ Monocle.Reader = function (node, bookData, options, onLoadCallback) {
   // Options:
   //  - hidden -- creates and hides the ctrl elements;
   //              use showControl to show them
+  //  - container -- specify an existing DOM element to contain the control.
   //
   function addControl(ctrl, cType, options) {
     for (var i = 0; i < p.controls.length; ++i) {
@@ -2211,44 +2477,37 @@ Monocle.Reader = function (node, bookData, options, onLoadCallback) {
 
     options = options || {};
 
-    var ctrlData = {
-      control: ctrl,
-      elements: [],
-      controlType: cType
-    }
+    var ctrlData = { control: ctrl, elements: [], controlType: cType }
     p.controls.push(ctrlData);
 
-    var ctrlElem;
-    var cntr = dom.find('container'), overlay = dom.find('overlay');
-    if (!cType || cType == "standard") {
-      ctrlElem = ctrl.createControlElements(cntr);
+    var addControlTo = function (cntr) {
+      if (cntr == 'container') {
+        cntr = options.container || dom.find('container');
+        if (typeof cntr == 'string') { cntr = document.getElementById(cntr); }
+        if (!cntr.dom) { dom.claim(cntr, 'controlContainer'); }
+      } else if (cntr == 'overlay') {
+        cntr = dom.find('overlay');
+      }
+      if (typeof ctrl.createControlElements != 'function') { return; }
+      var ctrlElem = ctrl.createControlElements(cntr);
+      if (!ctrlElem) { return; }
       cntr.appendChild(ctrlElem);
       ctrlData.elements.push(ctrlElem);
-    } else if (cType == "page") {
-      forEachPage(function (page, i) {
-        var runner = ctrl.createControlElements(page);
-        page.appendChild(runner);
-        ctrlData.elements.push(runner);
-      });
-    } else if (cType == "modal" || cType == "popover" || cType == "hud") {
-      ctrlElem = ctrl.createControlElements(overlay);
-      overlay.appendChild(ctrlElem);
-      ctrlData.elements.push(ctrlElem);
-      ctrlData.usesOverlay = true;
-    } else if (cType == "invisible") {
-      if (
-        typeof(ctrl.createControlElements) == "function" &&
-        (ctrlElem = ctrl.createControlElements(cntr))
-      ) {
-        cntr.appendChild(ctrlElem);
-        ctrlData.elements.push(ctrlElem);
-      }
-    } else {
-      console.warn("Unknown control type: " + cType);
+      Monocle.Styles.applyRules(ctrlElem, Monocle.Styles.control);
+      return ctrlElem;
     }
 
-    for (var i = 0; i < ctrlData.elements.length; ++i) {
-      Monocle.Styles.applyRules(ctrlData.elements[i], Monocle.Styles.control);
+    if (!cType || cType == 'standard' || cType == 'invisible') {
+      addControlTo('container');
+    } else if (cType == 'page') {
+      forEachPage(addControlTo);
+    } else if (cType == 'modal' || cType == 'popover' || cType == 'hud') {
+      addControlTo('overlay');
+      ctrlData.usesOverlay = true;
+    } else if (cType == 'invisible') {
+      addControlTo('container');
+    } else {
+      console.warn('Unknown control type: ' + cType);
     }
 
     if (options.hidden) {
@@ -2314,8 +2573,9 @@ Monocle.Reader = function (node, bookData, options, onLoadCallback) {
     }
 
     var overlay = dom.find('overlay');
+    var i, ii;
     if (controlData.usesOverlay && controlData.controlType != "hud") {
-      for (var i = 0, ii = p.controls.length; i < ii; ++i) {
+      for (i = 0, ii = p.controls.length; i < ii; ++i) {
         if (p.controls[i].usesOverlay && !p.controls[i].hidden) {
           return false;
         }
@@ -2324,25 +2584,24 @@ Monocle.Reader = function (node, bookData, options, onLoadCallback) {
       dispatchEvent('monocle:modal:on');
     }
 
-    for (var i = 0; i < controlData.elements.length; ++i) {
+    for (i = 0; i < controlData.elements.length; ++i) {
       controlData.elements[i].style.display = "block";
     }
 
     if (controlData.controlType == "popover") {
-      var onControl = function (evt) {
+      var beyondControl = function (evt) {
         var obj = evt.target;
         do {
-          if (obj == controlData.elements[0]) { return true; }
+          if (obj == controlData.elements[0]) { return false; }
         } while (obj && (obj = obj.parentNode));
-        return false;
+        Gala.stop(evt);
+        return true;
       }
-      overlay.listeners = Monocle.Events.listenForContact(
-        overlay,
-        {
-          start: function (evt) { if (!onControl(evt)) { evt.stopPropagation(); hideControl(ctrl); } },
-          move: function (evt) { if (!onControl(evt)) { evt.preventDefault(); } }
-        }
-      );
+      var handlers = {
+        start: function (e) { if (beyondControl(e)) { hideControl(ctrl); } },
+        move: beyondControl
+      }
+      overlay.listeners = Monocle.Events.listenForContact(overlay, handlers);
     }
     controlData.hidden = false;
     if (ctrl.properties) {
@@ -2355,7 +2614,7 @@ Monocle.Reader = function (node, bookData, options, onLoadCallback) {
 
   function showingControl(ctrl) {
     var controlData = dataForControl(ctrl);
-    return controlData.hidden == false;
+    return controlData.hidden === false;
   }
 
 
@@ -2409,6 +2668,14 @@ Monocle.Reader = function (node, bookData, options, onLoadCallback) {
   }
 
 
+  function fatalSystemMessage(msg) {
+    var info = dom.make('div', 'book_fatality', { html: msg });
+    var box = dom.find('box');
+    var bbOrigin = [box.offsetWidth / 2, box.offsetHeight / 2];
+    API.billboard.show(info, { closeButton: false, from: bbOrigin });
+  }
+
+
   API.getBook = getBook;
   API.getPlace = getPlace;
   API.moveTo = moveTo;
@@ -2435,12 +2702,18 @@ Monocle.Reader = function (node, bookData, options, onLoadCallback) {
 }
 
 
-
-Monocle.Reader.SUPPORT_URL = 'http://unsupported.monoclejs.com';
-Monocle.Reader.RESIZE_DELAY = 100;
+Monocle.Reader.RESIZE_DELAY = Monocle.Browser.renders.slow ? 500 : 100;
 Monocle.Reader.DEFAULT_SYSTEM_ID = 'RS:monocle'
 Monocle.Reader.DEFAULT_CLASS_PREFIX = 'monelem_'
 Monocle.Reader.DEFAULT_STYLE_RULES = Monocle.Formatting.DEFAULT_STYLE_RULES;
+Monocle.Reader.COMPATIBILITY_INFO =
+  "<h1>Incompatible browser</h1>"+
+  "<p>Unfortunately, your browser isn't able to display this book. "+
+  "If possible, try again in another browser or on another device.</p>";
+Monocle.Reader.LOAD_FAILURE_INFO =
+  "<h1>Book could not be loaded</h1>"+
+  "<p>Sorry, parts of the book could not be retrieved.<br />"+
+  "Please check your connection and refresh to try again.</p>";
 /* BOOK */
 
 /* The Book handles movement through the content by the reader page elements.
@@ -2448,8 +2721,6 @@ Monocle.Reader.DEFAULT_STYLE_RULES = Monocle.Formatting.DEFAULT_STYLE_RULES;
  * It's responsible for instantiating components as they are required,
  * and for calculating which component and page number to move to (based on
  * requests from the Reader).
- *
- * It should set and know the place of each page element too.
  *
  */
 
@@ -2485,7 +2756,7 @@ Monocle.Book = function (dataSource, preloadWindow) {
   //
   //  - page: positive integer. Counting up from the start of component.
   //  - pagesBack: negative integer. Counting back from the end of component.
-  //  - percent: float
+  //  - percent: float indicating percentage through the component
   //  - direction: integer relative to the current page number for this pageDiv
   //  - position: string, one of "start" or "end", moves to corresponding point
   //      in the given component
@@ -2546,7 +2817,7 @@ Monocle.Book = function (dataSource, preloadWindow) {
     var result = { load: false, componentId: locus.componentId, page: 1 }
 
     // Get the current last page.
-    lastPageNum = component.lastPageNumber();
+    var lastPageNum = component.lastPageNumber();
 
     // Deduce the page number for the given locus.
     if (typeof(locus.page) == "number") {
@@ -2580,7 +2851,7 @@ Monocle.Book = function (dataSource, preloadWindow) {
     }
 
     if (result.page < 1) {
-      if (cIndex == 0) {
+      if (cIndex === 0) {
         // On first page of book.
         result.page = 1;
         result.boundarystart = true;
@@ -2628,7 +2899,7 @@ Monocle.Book = function (dataSource, preloadWindow) {
         pageDiv.m.place = pageDiv.m.place || new Monocle.Place();
         pageDiv.m.place.setPlace(component, locus.page);
 
-        var evtData = {
+        evtData = {
           page: pageDiv,
           locus: locus,
           pageNumber: pageDiv.m.place.pageNumber(),
@@ -2652,74 +2923,53 @@ Monocle.Book = function (dataSource, preloadWindow) {
   // As with setPageAt, if you call this you're obliged to move the frame
   // offset to the given page in the locus passed to the callback.
   //
-  // If you pass a function as the progressCallback argument, the logic of this
-  // function will be in your control. The function will be invoked between:
-  //
-  // a) loading the component and
-  // b) applying the component to the frame and
-  // c) loading any further components if required
-  //
-  // with a function argument that performs the next step in the process. So
-  // if you need to do some special handling during the load process, you can.
-  //
-  function loadPageAt(pageDiv, locus, callback, progressCallback) {
+  function loadPageAt(pageDiv, locus, onLoad, onFail) {
     var cIndex = p.componentIds.indexOf(locus.componentId);
     if (!locus.load || cIndex < 0) {
       locus = pageNumberAt(pageDiv, locus);
     }
 
     if (!locus) {
-      return;
+      return onFail ? onFail() : null;
     }
 
     if (!locus.load) {
-      callback(locus);
-      return;
+      return onLoad(locus);
     }
 
     var findPageNumber = function () {
       locus = setPageAt(pageDiv, locus);
       if (!locus) {
-        return;
+        return onFail ? onFail() : null;
       } else if (locus.load) {
-        loadPageAt(pageDiv, locus, callback, progressCallback)
+        loadPageAt(pageDiv, locus, onLoad, onFail)
       } else {
-        callback(locus);
+        onLoad(locus);
       }
     }
 
-    var pgFindPageNumber = function () {
-      progressCallback ? progressCallback(findPageNumber) : findPageNumber();
-    }
-
     var applyComponent = function (component) {
-      component.applyTo(pageDiv, pgFindPageNumber);
+      component.applyTo(pageDiv, findPageNumber);
       for (var l = 1; l <= p.preloadWindow; ++l) {
         deferredPreloadComponent(cIndex+l, l*k.PRELOAD_INTERVAL);
       }
     }
 
-    var pgApplyComponent = function (component) {
-      progressCallback ?
-        progressCallback(function () { applyComponent(component) }) :
-        applyComponent(component);
-    }
-
-    loadComponent(cIndex, pgApplyComponent, pageDiv);
+    loadComponent(cIndex, applyComponent, onFail, pageDiv);
   }
 
 
   // If your flipper doesn't care whether a component needs to be
   // loaded before the page can be set, you can use this shortcut.
   //
-  function setOrLoadPageAt(pageDiv, locus, callback, onProgress, onFail) {
+  function setOrLoadPageAt(pageDiv, locus, onLoad, onFail) {
     locus = setPageAt(pageDiv, locus);
     if (!locus) {
       if (onFail) { onFail(); }
     } else if (locus.load) {
-      loadPageAt(pageDiv, locus, callback, onProgress);
+      loadPageAt(pageDiv, locus, onLoad, onFail);
     } else {
-      callback(locus);
+      onLoad(locus);
     }
   }
 
@@ -2729,15 +2979,17 @@ Monocle.Book = function (dataSource, preloadWindow) {
   // 'index' is the index of the component in the
   // dataSource.getComponents array.
   //
-  // 'callback' is invoked when the source is received.
+  // 'onLoad' is invoked when the source is received.
+  //
+  // 'onFail' is optional, and is invoked if the source could not be fetched.
   //
   // 'pageDiv' is optional, and simply allows firing events on
   // the reader object that has requested this component, ONLY if
   // the source has not already been received.
   //
-  function loadComponent(index, successCallback, pageDiv) {
+  function loadComponent(index, onLoad, onFail, pageDiv) {
     if (p.components[index]) {
-      return successCallback(p.components[index]);
+      return onLoad(p.components[index]);
     }
 
     var cmptId = p.components[index];
@@ -2747,19 +2999,13 @@ Monocle.Book = function (dataSource, preloadWindow) {
     var onCmptLoad = function (cmpt) {
       evtData['component'] = cmpt;
       pageDiv.m.reader.dispatchEvent('monocle:componentloaded', evtData);
-      successCallback(cmpt);
+      onLoad(cmpt);
     }
 
-    var onCmptFail = function () {
+    var onCmptFail = function (cmptId) {
       console.warn("Failed to load component: "+cmptId);
       pageDiv.m.reader.dispatchEvent('monocle:componentfailed', evtData);
-      try {
-        var currCmpt = pageDiv.m.activeFrame.m.component;
-        evtData.cmptId = currCmpt.properties.id;
-        successCallback(currCmpt);
-      } catch (e) {
-        console.warn("Failed to fall back to previous component.");
-      }
+      if (onFail) { onFail(); }
     }
 
     _loadComponent(index, onCmptLoad, onCmptFail);
@@ -2790,7 +3036,7 @@ Monocle.Book = function (dataSource, preloadWindow) {
     }
 
     var onCmptFail = function () {
-      fireLoadQueue(cmptId, 'failure');
+      fireLoadQueue(cmptId, 'failure', cmptId);
     }
 
     var onCmptLoad = function (cmptSource) {
@@ -2972,23 +3218,29 @@ Monocle.Place = function () {
   // 0 - start of book. 1.0 - end of book.
   //
   function percentAtTopOfPage() {
-    return p.percent - 1.0 / p.component.lastPageNumber();
+    return p.percent - pageSizePercentage();
   }
 
 
   // How far we are through the component at the "bottom of the page".
-  //
-  // NB: API aliases this to percentageThrough().
   //
   function percentAtBottomOfPage() {
     return p.percent;
   }
 
 
+  function pageSizePercentage() {
+    return 1.0 / p.component.lastPageNumber();
+  }
+
+
   // The page number at a given point (0: start, 1: end) within the component.
   //
   function pageAtPercentageThrough(percent) {
-    return Math.max(Math.round(p.component.lastPageNumber() * percent), 1);
+    var pages = pagesInComponent();
+    if (typeof percent != 'number') { percent = 0; }
+    // We round after 4 decimal places because 25*0.8 = 7.000000000000001.
+    return Math.max(Math.ceil(Math.round(pages * percent * 1000) / 1000), 1);
   }
 
 
@@ -3008,7 +3260,7 @@ Monocle.Place = function () {
     if (p.chapter) {
       return p.chapter;
     }
-    return p.chapter = p.component.chapterForPage(pageNumber());
+    return p.chapter = p.component.chapterForPage(pageNumber()+1);
   }
 
 
@@ -3068,7 +3320,7 @@ Monocle.Place = function () {
 
 
   function onFirstPageOfBook() {
-    return p.component.properties.index == 0 && pageNumber() == 1;
+    return p.component.properties.index === 0 && pageNumber() === 1;
   }
 
 
@@ -3087,6 +3339,7 @@ Monocle.Place = function () {
   API.percentAtTopOfPage = percentAtTopOfPage;
   API.percentAtBottomOfPage = percentAtBottomOfPage;
   API.percentageThrough = percentAtBottomOfPage;
+  API.pageSizePercentage = pageSizePercentage;
   API.pageAtPercentageThrough = pageAtPercentageThrough;
   API.pageNumber = pageNumber;
   API.pagesInComponent = pagesInComponent;
@@ -3241,20 +3494,18 @@ Monocle.Component = function (book, id, index, chapters, source) {
   function loadFrameFromHTML(src, frame, callback) {
     var fn = function () {
       Monocle.Events.deafen(frame, 'load', fn);
+      frame.whenDocumentReady();
       Monocle.defer(callback);
     }
     Monocle.Events.listen(frame, 'load', fn);
-
-    // Load the component into the iframe using document.write().
-    frame.contentDocument.open('text/html', 'replace');
-    frame.contentDocument.write(src);
-    frame.contentDocument.close();
-    frame.whenDocumentReady();
-
-    // ALTERNATIVE: load the component into the iframe with a JS URL.
-    // frame.contentWindow['monCmptData'] = src;
-    // src = "javascript:window['monCmptData'];"
-    // frame.src = src;
+    if (Monocle.Browser.env.loadHTMLWithDocWrite) {
+      frame.contentDocument.open('text/html', 'replace');
+      frame.contentDocument.write(src);
+      frame.contentDocument.close();
+    } else {
+      frame.contentWindow['monCmptData'] = src;
+      frame.src = "javascript:window['monCmptData'];"
+    }
   }
 
 
@@ -3328,6 +3579,13 @@ Monocle.Component = function (book, id, index, chapters, source) {
       // Find the place of any chapters in the component.
       locateChapters(pageDiv);
 
+      // Nothing can prevent iframe scrolling on Android, so we have to undo it.
+      if (Monocle.Browser.on.Android) {
+        Monocle.Events.listen(frame.contentWindow, 'scroll', function () {
+          frame.contentWindow.scrollTo(0,0);
+        });
+      }
+
       // Announce that the component has changed.
       var doc = frame.contentDocument;
       var evtData = { 'page': pageDiv, 'document': doc, 'component': API };
@@ -3344,7 +3602,7 @@ Monocle.Component = function (book, id, index, chapters, source) {
   function updateDimensions(pageDiv, callback) {
     pageDiv.m.dimensions.update(function (pageLength) {
       p.pageLength = pageLength;
-      if (typeof callback == "function") { callback() };
+      if (typeof callback == "function") { callback() }
     });
   }
 
@@ -3493,11 +3751,12 @@ Monocle.Component = function (book, id, index, chapters, source) {
       p.source = { html: srcs.join('') };
     }
 
+    var baseURI;
     if (p.source.html && !p.source.html.match(new RegExp("<base\s.+>", "im"))) {
-      var baseURI = computeBaseURI(reader);
+      baseURI = computeBaseURI(reader);
       if (baseURI) {
         p.source.html = p.source.html.replace(
-          new RegExp("(<head(\s[^>]*>)|>)", "im"),
+          new RegExp("(<head[^>]*>)", "im"),
           '$1<base href="'+baseURI+'" />'
         );
       }
@@ -3505,7 +3764,7 @@ Monocle.Component = function (book, id, index, chapters, source) {
 
     if (p.source.doc && !p.source.doc.querySelector('base')) {
       var srcHead = p.source.doc.querySelector('head') || p.source.doc.body;
-      var baseURI = computeBaseURI(reader);
+      baseURI = computeBaseURI(reader);
       if (srcHead && baseURI) {
         var srcBase = p.source.doc.createElement('base');
         srcBase.setAttribute('href', baseURI);
@@ -3526,7 +3785,7 @@ Monocle.Component = function (book, id, index, chapters, source) {
   function absoluteURL(url) {
     var link = document.createElement('a');
     link.setAttribute('href', url);
-    result = link.href;
+    var result = link.href;
     delete(link);
     return result;
   }
@@ -3664,6 +3923,7 @@ Monocle.Selection = function (reader) {
       return elem;
     }
 
+    var nvp;
     if (ovp) {
       var ovpcontent = ovp.getAttribute('content');
       var re = /user-scalable\s*=\s*([^,$\s])*/;
@@ -3675,13 +3935,13 @@ Monocle.Selection = function (reader) {
         nvpcontent += nvpcontent ? ', ' : '';
         nvpcontent += 'user-scalable=no';
         head.removeChild(ovp);
-        var nvp = createViewportMeta(nvpcontent);
+        nvp = createViewportMeta(nvpcontent);
         fn();
         head.removeChild(nvp);
         head.appendChild(ovp);
       }
     } else {
-      var nvp = createViewportMeta('user-scalable=no');
+      nvp = createViewportMeta('user-scalable=no');
       fn();
       nvp.setAttribute('content', 'user-scalable=yes');
     }
@@ -3716,7 +3976,7 @@ Monocle.Billboard = function (reader) {
     p.reader.dispatchEvent('monocle:modal:on');
     if (p.cntr) { return console.warn("Modal billboard already showing."); }
 
-    var options = options || {};
+    options = options || {};
     var elem = urlOrElement;
     p.cntr = reader.dom.append('div', k.CLS.cntr);
     if (typeof urlOrElement == 'string') {
@@ -3731,7 +3991,7 @@ Monocle.Billboard = function (reader) {
       elem.naturalWidth || elem.offsetWidth,
       elem.naturalHeight || elem.offsetHeight
     ];
-    if (options.closeButton != false) {
+    if (options.closeButton !== false) {
       var cBtn = p.cntr.dom.append('div', k.CLS.closeButton);
       Monocle.Events.listenForTap(cBtn, hide);
     }
@@ -3750,20 +4010,20 @@ Monocle.Billboard = function (reader) {
 
 
   function grow() {
-    Monocle.Styles.transitionFor(p.cntr, 'transform', k.ANIM_MS, 'ease-in');
+    Monocle.Styles.transitionFor(p.cntr, 'transform', k.ANIM_MS, 'ease-in-out');
     Monocle.Styles.affix(p.cntr, 'transform', 'translate(0, 0) scale(1)');
   }
 
 
   function shrink(from) {
     p.from = from || p.from || [0,0];
-    var x = p.from[0]+'px';
-    var y = p.from[1]+'px';
-    Monocle.Styles.affix(
-      p.cntr,
-      'transform',
-      'translate('+x+','+y+') scale(0)'
-    );
+    var translate = 'translate('+p.from[0]+'px, '+p.from[1]+'px)';
+    var scale = 'scale(0)';
+    if (typeof p.from[2] === 'number') {
+      scale = 'scaleX('+(p.from[2] / p.cntr.offsetWidth)+') ';
+      scale += 'scaleY('+(p.from[3] / p.cntr.offsetHeight)+')';
+    }
+    Monocle.Styles.affix(p.cntr, 'transform', translate+' '+scale);
   }
 
 
@@ -3789,14 +4049,14 @@ Monocle.Billboard = function (reader) {
     var w = (p.inner.scrollWidth - p.inner.offsetWidth);
     var h = (p.inner.scrollHeight - p.inner.offsetHeight);
     if (s[0].match(/^\d+$/)) {
-      l = Math.max(0, parseInt(s[0]) - (p.inner.offsetWidth / 2));
+      l = Math.max(0, parseInt(s[0], 10) - (p.inner.offsetWidth / 2));
     } else if (s[0] == 'center') {
       l = w / 2;
     } else if (s[0] == 'right') {
       l = w;
     }
     if (s[1] && s[1].match(/^\d+$/)) {
-      t = Math.max(0, parseInt(s[1]) - (p.inner.offsetHeight / 2));
+      t = Math.max(0, parseInt(s[1], 10) - (p.inner.offsetHeight / 2));
     } else if (!s[1] || s[1] == 'center') {
       t =  h / 2;
     } else if (s[1] == 'bottom') {
@@ -3977,7 +4237,7 @@ Monocle.Panels.TwoPane = function (flipper, evtCallbacks) {
       backwards: new Monocle.Controls.Panel()
     }
 
-    for (dir in p.panels) {
+    for (var dir in p.panels) {
       flipper.properties.reader.addControl(p.panels[dir]);
       p.panels[dir].listenTo(evtCallbacks);
       p.panels[dir].setDirection(flipper.constants[dir.toUpperCase()]);
@@ -4017,7 +4277,7 @@ Monocle.Panels.IMode = function (flipper, evtCallbacks) {
     }
     p.divs = {}
 
-    for (dir in p.panels) {
+    for (var dir in p.panels) {
       p.reader.addControl(p.panels[dir]);
       p.divs[dir] = p.panels[dir].properties.div;
       p.panels[dir].listenTo(evtCallbacks);
@@ -4082,9 +4342,6 @@ Monocle.Panels.IMode = function (flipper, evtCallbacks) {
     p.reader.showControl(p.toggleIcon);
 
     p.interactive = true;
-    if (flipper.interactiveMode) {
-      flipper.interactiveMode(true);
-    }
   }
 
 
@@ -4106,9 +4363,6 @@ Monocle.Panels.IMode = function (flipper, evtCallbacks) {
     p.reader.hideControl(p.toggleIcon);
 
     p.interactive = false;
-    if (flipper.interactiveMode) {
-      flipper.interactiveMode(false);
-    }
   }
 
 
@@ -4261,19 +4515,15 @@ Monocle.Panels.Marginal = function (flipper, evtCallbacks) {
       backwards: new Monocle.Controls.Panel()
     }
 
-    for (dir in p.panels) {
+    for (var dir in p.panels) {
       flipper.properties.reader.addControl(p.panels[dir]);
       p.panels[dir].listenTo(evtCallbacks);
       p.panels[dir].setDirection(flipper.constants[dir.toUpperCase()]);
-      with (p.panels[dir].properties.div.style) {
-        dir == "forwards" ? right = 0 : left = 0;
-      }
+
+      var prop = dir == "forwards" ? "right" : "left";
+      p.panels[dir].properties.div.style[prop] = 0
     }
     setWidths();
-
-    if (flipper.interactiveMode) {
-      flipper.interactiveMode(true);
-    }
   }
 
 
@@ -4327,6 +4577,7 @@ Monocle.Panels.Magic = function (flipper, evtCallbacks) {
     p.reader.listen('monocle:magic:halt', haltListeners);
     p.reader.listen('monocle:modal:on', disable);
     p.reader.listen('monocle:modal:off', enable);
+    Monocle.Events.listen(window, 'gala:contact:cancel', resetAction);
   }
 
 
@@ -4435,12 +4686,17 @@ Monocle.Panels.Magic = function (flipper, evtCallbacks) {
     p.action.screenX = evt.m.screenX;
     p.action.screenY = evt.m.screenY;
     p.action.dir = evt.m.readerX > halfway() ? k.FORWARDS : k.BACKWARDS;
-    invoke('start', evt);
+    p.action.handled = !dispatch('monocle:magic:contact:start', evt);
+    if (!p.action.handled) { invoke('start', evt); }
   }
 
 
   function readerContactMove(evt) {
-    invoke('move', evt);
+    if (p.action.handled) {
+      dispatch('monocle:magic:contact:move', evt);
+    } else {
+      invoke('move', evt);
+    }
     // Can't prevent mousemove, so has no effect there. Preventing default
     // for touchmove will override scrolling, while still allowing selection.
     evt.preventDefault();
@@ -4450,7 +4706,7 @@ Monocle.Panels.Magic = function (flipper, evtCallbacks) {
   function readerContactEnd(evt) {
     p.action.endX = evt.m.readerX;
     p.action.endY = evt.m.readerY;
-    invoke('end', evt);
+    if (dispatch('monocle:magic:contact', evt)) { invoke('end', evt); }
     p.action = {};
   }
 
@@ -4486,13 +4742,7 @@ Monocle.Panels.Magic = function (flipper, evtCallbacks) {
       p.action.dir = p.action.startX > p.action.endX ? k.FORWARDS : k.BACKWARDS;
     }
 
-    var rr = p.parts.reader.getBoundingClientRect();
-    var evtData = {
-      start: { x: p.action.startX, y: p.action.startY },
-      end: { x: p.action.endX, y: p.action.endY },
-      max: { x: rr.right - rr.left, y: rr.bottom - rr.top }
-    }
-    if (p.reader.dispatchEvent('monocle:magic:contact', evtData, true)) {
+    if (dispatch('monocle:magic:contact', evt)) {
       invoke('start', evt);
       invoke('end', evt);
     }
@@ -4561,6 +4811,19 @@ Monocle.Panels.Magic = function (flipper, evtCallbacks) {
   }
 
 
+  // Returns true if the event WAS NOT cancelled.
+  function dispatch(evtName, trigger) {
+    var rr = p.parts.reader.getBoundingClientRect();
+    var evtData = {
+      trigger: trigger,
+      start: { x: p.action.startX, y: p.action.startY },
+      end: { x: p.action.endX, y: p.action.endY },
+      max: { x: rr.right - rr.left, y: rr.bottom - rr.top }
+    }
+    return p.reader.dispatchEvent(evtName, evtData, true);
+  }
+
+
   function invoke(evtType, evt) {
     if (p.evtCallbacks[evtType]) {
       p.evtCallbacks[evtType](p.action.dir, evt.m.readerX, evt.m.readerY, API);
@@ -4620,7 +4883,7 @@ Monocle.Dimensions.Columns = function (pageDiv) {
     rules += Monocle.Browser.css.toCSSDeclaration('column-width', pdims.col+'px');
     rules += Monocle.Browser.css.toCSSDeclaration('column-gap', k.GAP+'px');
     rules += Monocle.Browser.css.toCSSDeclaration('column-fill', 'auto');
-    rules += Monocle.Browser.css.toCSSDeclaration('transform', 'translateX(0)');
+    rules += Monocle.Browser.css.toCSSDeclaration('transform', 'none');
 
     if (Monocle.Browser.env.forceColumns && ce.scrollHeight > pdims.height) {
       rules += Monocle.Styles.rulesToString(k.STYLE['column-force']);
@@ -4713,6 +4976,7 @@ Monocle.Dimensions.Columns = function (pageDiv) {
     if (transition) {
       Monocle.Styles.affix(ce, "transition", transition);
     }
+    // NB: can't use setX as it causes a flicker on iOS.
     Monocle.Styles.affix(ce, "transform", "translateX(-"+offset+"px)");
   }
 
@@ -4726,21 +4990,23 @@ Monocle.Dimensions.Columns = function (pageDiv) {
       translateToOffset(0);
 
       // Store scroll offsets for all windows.
-      var win = s = p.page.m.activeFrame.contentWindow;
+      var win, s;
+      win = s = p.page.m.activeFrame.contentWindow;
       var scrollers = [
         [win, win.scrollX, win.scrollY],
         [window, window.scrollX, window.scrollY]
       ];
       //while (s != s.parent) { scrollers.push([s, s.scrollX]); s = s.parent; }
 
+      var scroller, x;
       if (Monocle.Browser.env.sheafIsScroller) {
-        var scroller = p.page.m.sheafDiv;
-        var x = scroller.scrollLeft;
+        scroller = p.page.m.sheafDiv;
+        x = scroller.scrollLeft;
         target.scrollIntoView();
         offset = scroller.scrollLeft;
       } else {
-        var scroller = win;
-        var x = scroller.scrollX;
+        scroller = win;
+        x = scroller.scrollX;
         target.scrollIntoView();
         offset = scroller.scrollX;
       }
@@ -4804,7 +5070,8 @@ Monocle.Flippers.Slider = function (reader) {
     reader: reader,
     pageCount: 2,
     activeIndex: 1,
-    turnData: {}
+    turnData: {},
+    nextPageReady: true
   }
 
 
@@ -4828,10 +5095,6 @@ Monocle.Flippers.Slider = function (reader) {
 
 
   function listenForInteraction(panelClass) {
-    // BROWSERHACK: Firstly, prime interactiveMode for buggy iOS WebKit.
-    interactiveMode(true);
-    interactiveMode(false);
-
     if (typeof panelClass != "function") {
       panelClass = k.DEFAULT_PANELS_CLASS;
       if (!panelClass) {
@@ -4850,13 +5113,6 @@ Monocle.Flippers.Slider = function (reader) {
   }
 
 
-  // A panel can call this with true/false to indicate that the user needs
-  // to be able to select or otherwise interact with text.
-  function interactiveMode(bState) {
-    p.reader.dispatchEvent('monocle:interactive:'+(bState ? 'on' : 'off'));
-  }
-
-
   function getPlace(pageDiv) {
     pageDiv = pageDiv || upperPage();
     return pageDiv.m ? pageDiv.m.place : null;
@@ -4864,24 +5120,23 @@ Monocle.Flippers.Slider = function (reader) {
 
 
   function moveTo(locus, callback) {
-    var fn = function () {
-      prepareNextPage(function () {
-        if (typeof callback == "function") { callback(); }
-        announceTurn();
-      });
+    var cb = function () {
+      if (typeof callback == "function") { callback(); }
+      announceTurn();
     }
-    setPage(upperPage(), locus, fn);
+    setPage(upperPage(), locus, function () { prepareNextPage(cb) });
   }
 
 
-  function setPage(pageDiv, locus, callback) {
+  function setPage(pageDiv, locus, onLoad, onFail) {
     p.reader.getBook().setOrLoadPageAt(
       pageDiv,
       locus,
       function (locus) {
         pageDiv.m.dimensions.translateToLocus(locus);
-        Monocle.defer(callback);
-      }
+        Monocle.defer(onLoad);
+      },
+      onFail
     );
   }
 
@@ -5011,12 +5266,17 @@ Monocle.Flippers.Slider = function (reader) {
 
 
   function onGoingForward(x) {
-    lifted(x);
+    if (p.nextPageReady === false) {
+      prepareNextPage(function () { lifted(x); }, resetTurnData);
+    } else {
+      lifted(x);
+    }
   }
 
 
   function onGoingBackward(x) {
     var lp = lowerPage(), up = upperPage();
+    var onFail = function () { slideOut(afterCancellingBackward); }
 
     if (Monocle.Browser.env.offscreenRenderingClipped) {
       // set lower to "the page before upper"
@@ -5027,10 +5287,9 @@ Monocle.Flippers.Slider = function (reader) {
           // flip lower to upper, ready to slide in from left
           flipPages();
           // move lower off the screen to the left
-          jumpOut(lp, function () {
-            lifted(x);
-          });
-        }
+          jumpOut(lp, function () { lifted(x); });
+        },
+        onFail
       );
     } else {
       jumpOut(lp, function () {
@@ -5038,7 +5297,8 @@ Monocle.Flippers.Slider = function (reader) {
         setPage(
           lp,
           getPlace(up).getLocus({ direction: k.BACKWARDS }),
-          function () { lifted(x); }
+          function () { lifted(x); },
+          onFail
         );
       });
     }
@@ -5047,39 +5307,13 @@ Monocle.Flippers.Slider = function (reader) {
 
   function afterGoingForward() {
     var up = upperPage(), lp = lowerPage();
-    if (p.interactive) {
-      // set upper (off screen) to current
-      setPage(
-        up,
-        getPlace().getLocus({ direction: k.FORWARDS }),
-        function () {
-          // move upper back onto screen, then set lower to next and reset turn
-          jumpIn(up, function () { prepareNextPage(announceTurn); });
-        }
-      );
-    } else {
-      flipPages();
-      jumpIn(up, function () { prepareNextPage(announceTurn); });
-    }
+    flipPages();
+    jumpIn(up, function () { prepareNextPage(announceTurn); });
   }
 
 
   function afterGoingBackward() {
-    if (p.interactive) {
-      // set lower page to current
-      setPage(
-        lowerPage(),
-        getPlace().getLocus(),
-        function () {
-          // flip lower to upper
-          flipPages();
-          // set lower to next and reset turn
-          prepareNextPage(announceTurn);
-        }
-      );
-    } else {
-      announceTurn();
-    }
+    announceTurn();
   }
 
 
@@ -5094,11 +5328,21 @@ Monocle.Flippers.Slider = function (reader) {
   }
 
 
-  function prepareNextPage(callback) {
+  // Prepares the lower page to show the next page after the current page,
+  // and calls onLoad when done.
+  //
+  // Note that if the next page is a new component, and it fails to load,
+  // onFail will be called. If onFail is not supplied, onLoad will be called.
+  //
+  function prepareNextPage(onLoad, onFail) {
     setPage(
       lowerPage(),
       getPlace().getLocus({ direction: k.FORWARDS }),
-      callback
+      onLoad,
+      function () {
+        onFail ? onFail() : onLoad();
+        p.nextPageReady = false;
+      }
     );
   }
 
@@ -5117,6 +5361,7 @@ Monocle.Flippers.Slider = function (reader) {
 
 
   function announceTurn() {
+    p.nextPageReady = true;
     p.reader.dispatchEvent('monocle:turn');
     resetTurnData();
   }
@@ -5140,7 +5385,7 @@ Monocle.Flippers.Slider = function (reader) {
     if (!options.duration) {
       duration = 0;
     } else {
-      duration = parseInt(options.duration);
+      duration = parseInt(options.duration, 10);
     }
 
     if (Monocle.Browser.env.supportsTransition) {
@@ -5199,7 +5444,7 @@ Monocle.Flippers.Slider = function (reader) {
 
 
   function jumpIn(pageDiv, callback) {
-    opts = { duration: (Monocle.Browser.env.stickySlideOut ? 1 : 0) }
+    var opts = { duration: (Monocle.Browser.env.stickySlideOut ? 1 : 0) }
     setX(pageDiv, 0, opts, callback);
   }
 
@@ -5274,7 +5519,6 @@ Monocle.Flippers.Slider = function (reader) {
 
   // OPTIONAL API - WILL BE INVOKED (WHERE RELEVANT) IF PROVIDED.
   API.visiblePages = visiblePages;
-  API.interactiveMode = interactiveMode;
 
   initialize();
 
@@ -5293,7 +5537,7 @@ Monocle.Flippers.Scroller = function (reader, setPageFn) {
   var k = API.constants = API.constructor;
   var p = API.properties = {
     pageCount: 1,
-    duration: 300
+    duration: k.speed
   }
 
 
@@ -5410,7 +5654,7 @@ Monocle.Flippers.Scroller = function (reader, setPageFn) {
   return API;
 }
 
-Monocle.Flippers.Scroller.speed = 200; // How long the animation takes
+Monocle.Flippers.Scroller.speed = 300; // How long the animation takes
 Monocle.Flippers.Scroller.rate = 20; // frame-rate of the animation
 Monocle.Flippers.Scroller.FORWARDS = 1;
 Monocle.Flippers.Scroller.BACKWARDS = -1;
@@ -5493,6 +5737,7 @@ Monocle.Flippers.Instant = function (reader) {
 Monocle.Flippers.Instant.FORWARDS = 1;
 Monocle.Flippers.Instant.BACKWARDS = -1;
 Monocle.Flippers.Instant.DEFAULT_PANELS_CLASS = Monocle.Panels.TwoPane;
+
 
 
 
