@@ -7,6 +7,7 @@ import posixpath
 import zipfile
 from xml.dom import minidom
 import json
+from gi.repository import Gtk
 
 class Epub(zipfile.ZipFile):
     
@@ -147,6 +148,8 @@ class EpubHandler(BaseHTTPRequestHandler):
             return self.halt()
         if path == '.bookdata.js':
             return self.book_data()
+        if path == '.application-menu':
+            return self.app_menu_icon()
         if path.startswith('.'):
             return self.static(path[1:])
         if path == '':
@@ -188,6 +191,10 @@ class EpubHandler(BaseHTTPRequestHandler):
             self.static('index.html')
         else:
             self.static('load.html')
+    
+    def app_menu_icon(self):
+        icon = Gtk.IconTheme.get_default().lookup_icon('emblem-system', 20, 0)
+        self.static(icon.get_filename())
     
     def static(self, path):
         resource_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
