@@ -126,7 +126,7 @@ class EpubServer(Soup.Server):
         self.epub = None
         
         self.add_handler('/.bookdata.js', self.book_data)
-        self.add_handler('/.application_menu', self.app_menu_icon)
+        self.add_handler('/.application-menu', self.app_menu_icon)
         self.add_handler('/.', self.static)
         self.add_handler('/', self.root)
         
