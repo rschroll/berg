@@ -1,13 +1,10 @@
-from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
-import urlparse
+from gi.repository import Gtk, Soup
 import os
-import shutil
 import mimetypes
 import posixpath
 import zipfile
 from xml.dom import minidom
 import json
-from gi.repository import Gtk
 
 class Epub(zipfile.ZipFile):
     
@@ -121,105 +118,81 @@ class Epub(zipfile.ZipFile):
         }''' % (json.dumps(self.spine), json.dumps(self.contents), json.dumps(self.metadata))
 
 
-class EpubServer(HTTPServer):
+class EpubServer(Soup.Server):
     
     def __init__(self, *args, **kw):
-        """Arguments are passed to HTTPServer.
-        
-        Valid named arguments:
-            debug   Enable logging of requests and replies (default: True).
-        
-        """
-        HTTPServer.__init__(self, *args)
+        """Arguments are passed to Soup.Server."""
+        Soup.Server.__init__(self, *args, **kw)
         self.epub = None
-        self.keep_running = True
-        self.log = kw.get('log', True)
+        
+        self.add_handler('/.bookdata.js', self.book_data)
+        self.add_handler('/.application_menu', self.app_menu_icon)
+        self.add_handler('/.', self.static)
+        self.add_handler('/', self.root)
+        
+        self.run_async()
     
-    def run(self):
-        while self.keep_running:
-            self.handle_request()
-
-class EpubHandler(BaseHTTPRequestHandler):
-    
-    def do_GET(self):
-        parsed_path = urlparse.urlparse(self.path)
-        path = urlparse.unquote(parsed_path.path[1:])  # strip leading /
-        if path == '.halt':
-            return self.halt()
-        if path == '.bookdata.js':
-            return self.book_data()
-        if path == '.application-menu':
-            return self.app_menu_icon()
-        if path.startswith('.'):
-            return self.static(path[1:])
-        if path == '':
-            return self.index(urlparse.unquote(parsed_path.query))
-        if self.server.epub is None:
-            self.send_error(500, "Epub not loaded")
-            return
-        if path in self.server.epub.namelist():
-            return self.from_epub(path)
-        self.send_error(404)
-    
-    def halt(self):
-        self.server.keep_running = False
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write("Good-bye")
-    
-    def book_data(self):
-        if not self.server.epub:
-            self.send_error(404)
+    def book_data(self, server, message, path, query, client):
+        if not self.epub:
+            message.set_status(Soup.Status.NOT_FOUND)
             return
         
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write("var bookData = %s" % self.server.epub.book_data)
+        message.set_status(Soup.Status.OK)
+        message.set_response('application/javascript', Soup.MemoryUse.COPY,
+            "var bookData = %s" % self.epub.book_data)
     
-    def index(self, epub_path):
-        if epub_path:
-            if self.server.epub is not None:
-                self.server.epub.close()
-            try:
-                self.server.epub = Epub(epub_path, 'r')
-            except (IOError, zipfile.BadZipfile):
-                self.send_error(500, "Could not load epub at " + epub_path)
-                self.server.epub = None
-                return
-        
-        if self.server.epub:
-            self.static('index.html')
-        else:
-            self.static('load.html')
-    
-    def app_menu_icon(self):
+    def app_menu_icon(self, server, message, path, query, client):
         icon = Gtk.IconTheme.get_default().lookup_icon('emblem-system', 20, 0)
-        self.static(icon.get_filename())
+        self.serve_resource(message, icon.get_filename())
     
-    def static(self, path):
+    def static(self, server, message, path, query, client):
+        self.serve_resource(message, path[2:])
+    
+    def serve_resource(self, message, path):
         resource_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'resources')
         try:
             f = open(os.path.join(resource_dir, path), 'rb')
         except IOError:
-            self.send_error(404)
+            message.set_status(Soup.Status.NOT_FOUND)
             return
         
-        self.send_response(200)
-        self.send_header("Content-type", self.guess_type(path))
-        fs = os.fstat(f.fileno())
-        self.send_header("Content-Length", str(fs[6]))
-        self.send_header("Last-Modified", self.date_time_string(fs.st_mtime))
-        self.end_headers()
-        shutil.copyfileobj(f, self.wfile)
+        message.set_status(Soup.Status.OK)
+        message.set_response(self.guess_type(path), Soup.MemoryUse.COPY, f.read())
     
-    def from_epub(self, path):
-        info = self.server.epub.getinfo(path)
-        self.send_response(200)
-        self.send_header("Content-type", self.guess_type(path))
-        self.send_header("Content-Length", info.file_size)
-        self.end_headers()
-        f = self.server.epub.open(info, 'r')
-        shutil.copyfileobj(f, self.wfile)
+    def root(self, server, message, path, query, client):
+        if path == '/':
+            return self.index(message, query)
+        if self.epub is None:
+            message.set_status(Soup.Status.INTERNAL_SERVER_ERROR)
+            return
+        if path[1:] in self.epub.namelist():
+            return self.from_epub(message, path[1:])
+        message.set_status(Soup.Status.NOT_FOUND)
+    
+    def index(self, message, query):
+        epub_path = query.get('load')
+        if epub_path:
+            if self.epub is not None:
+                self.epub.close()
+            try:
+                self.epub = Epub(epub_path, 'r')
+            except (IOError, zipfile.BadZipfile):
+                message.set_status(Soup.Status.INTERNAL_SERVER_ERROR)
+                message.set_response('text/plain', Soup.MemoryUse.COPY,
+                    "Could not load epub at " + epub_path)
+                self.epub = None
+                return
+        
+        if self.epub:
+            self.serve_resource(message, 'index.html')
+        else:
+            self.serve_resource(message, 'load.html')
+    
+    def from_epub(self, message, path):
+        info = self.epub.getinfo(path)
+        message.set_status(Soup.Status.OK)
+        f = self.epub.open(info, 'r')
+        message.set_response(self.guess_type(path), Soup.MemoryUse.COPY, f.read())
     
     def guess_type(self, path):
         base, ext = posixpath.splitext(path)
@@ -232,20 +205,18 @@ class EpubHandler(BaseHTTPRequestHandler):
                 return mimetypes.types_map[ext.lower()]
             except KeyError:
                 return 'application/octet-stream'
-    
-    def log_message(self, *args):
-        if self.server.log:
-            BaseHTTPRequestHandler.log_message(self, *args)
 
 
 if __name__ == '__main__':
     import sys
     import webbrowser
+    from gi.repository import GLib
     
     if len(sys.argv) == 1:
         print "Pass the path the the EPUB file as the first argument"
         raise SystemExit
     
-    server = EpubServer(('localhost', 8080), EpubHandler)
-    webbrowser.open('http://localhost:8080/?%s' % os.path.abspath(sys.argv[1]))
-    server.run()
+    server = EpubServer(port=8080)
+    webbrowser.open('http://localhost:8080/?load=%s' % os.path.abspath(sys.argv[1]))
+    loop = GLib.MainLoop()
+    loop.run()

@@ -55,7 +55,6 @@ class EpubReader(Gtk.ApplicationWindow):
         # Work-around for application title
         # http://stackoverflow.com/questions/9324163/how-to-set-application-title-in-gnome-shell
         self.set_wmclass("Berg", "Berg")
-        self.connect('destroy', self.on_quit)
         self.connect('key-press-event', self.on_key_press)
         self.connect('configure-event', self.on_configure)
         self._size = (0, 0)
@@ -101,32 +100,23 @@ class EpubReader(Gtk.ApplicationWindow):
         self.add_accel_group(self.ui_manager.get_accel_group())
     
     def spawn_server(self):
-        self.server = epubserver.EpubServer(('localhost', 0), epubserver.EpubHandler,
-                                            log=self.application.debug)
-        self.port = self.server.server_port
-        self.thread = threading.Thread(target=self.server.run)
-        self.thread.start()
-        
-    def on_quit(self, *args):
-        try:
-            urllib2.urlopen("http://localhost:%s/.halt" % self.port).read()
-        except urllib2.URLError:
-            pass
-        self.thread.join(2)
-        if self.thread.isAlive():
-            print "Server thread won't die!"
+        self.server = epubserver.EpubServer()
+        self.port = self.server.get_port()
     
     def load_file_lazy(self, filename):
         GLib.idle_add(self.load_file, filename)
     
     def load_file(self, filename):
-        self.view.load_uri("http://localhost:%i/?%s" % (self.port, filename))
+        self.view.load_uri("http://localhost:%i/?load=%s" % (self.port, filename))
     
     def on_drag_drop(self, widget, context, x, y, time, data=None):
         filename = self.view.dnd_data
         if filename.startswith('file://'):
             filename = filename[7:]
         self.application.load_file(filename)
+    
+    def on_quit(self, *args):
+        self.destroy()
     
     def on_settings(self, *args):
         self.settings.show()
