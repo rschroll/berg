@@ -1,10 +1,6 @@
 from gi.repository import GObject, GLib, Gdk, Gtk, WebKit
-import urllib2
-import threading
-import socket
 import epubserver
 from readersettings import ReaderSettings
-GObject.threads_init()
 
 NONE, WAITING, ACCEPT, REJECT = range(4)
 
