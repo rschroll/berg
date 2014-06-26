@@ -1,4 +1,4 @@
-from gi.repository import GObject, GLib, Gdk, Gtk, WebKit
+from gi.repository import GObject, GLib, Gdk, Gtk, Gio, WebKit
 import epubserver
 from readersettings import ReaderSettings
 
@@ -47,6 +47,31 @@ class EpubReader(Gtk.ApplicationWindow):
         self.application = application
         self.load_file_lazy(filename)
         
+        self.establish_actions()
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.view = DNDWebView()
+        self.view.connect('drag-drop', self.on_drag_drop)
+        sw.add(self.view)
+        self.add(sw)
+        self.view.connect('title-changed', self.on_title_changed)
+        self.view.connect('console-message', self.on_console_message)
+        
+        self.hb = Gtk.HeaderBar()
+        self.hb.set_show_close_button(True)
+        self.settings_button = Gtk.Button.new_from_icon_name('emblem-system-symbolic', Gtk.IconSize.BUTTON)
+        self.settings_button.connect('clicked', self.on_settings)
+        self.hb.pack_end(self.settings_button)
+        
+        self.toc_button = Gtk.Button.new_from_icon_name('view-list-symbolic', Gtk.IconSize.BUTTON)
+        self.toc_button.connect('clicked', self.on_toc)
+        self.hb.pack_start(self.toc_button)
+        
+        self.open_button = Gtk.Button.new_from_icon_name('document-open-symbolic', Gtk.IconSize.BUTTON)
+        self.open_button.connect('clicked', self.application.on_open)
+        self.hb.pack_start(self.open_button)
+        self.set_titlebar(self.hb)
+        
         self.set_title("Berg")
         # Work-around for application title
         # http://stackoverflow.com/questions/9324163/how-to-set-application-title-in-gnome-shell
@@ -56,20 +81,11 @@ class EpubReader(Gtk.ApplicationWindow):
         self._size = (0, 0)
         self._resize_timeout = None
         
-        self.establish_actions()
-        sw = Gtk.ScrolledWindow()
-        sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        self.view = DNDWebView()
-        self.view.connect('drag-drop', self.on_drag_drop)
-        sw.add(self.view)
-        self.add(sw)
-        self.view.connect('title-changed', self.on_title_changed)
-        self.view.connect('navigation-policy-decision-requested', self.on_navigation_policy_decision_requested)
-        self.view.connect('console-message', self.on_console_message)
-        
         self.settings = ReaderSettings(self)
         
         self.show_all()
+        self.toc_button.hide()
+        self.settings_button.hide()
         
         self.spawn_server()
     
@@ -104,6 +120,10 @@ class EpubReader(Gtk.ApplicationWindow):
     
     def load_file(self, filename):
         self.view.load_uri("http://localhost:%i/?load=%s" % (self.port, filename))
+        if filename:
+            self.open_button.hide()
+            self.settings_button.show()
+            self.toc_button.show()
     
     def on_drag_drop(self, widget, context, x, y, time, data=None):
         filename = self.view.dnd_data
@@ -119,6 +139,9 @@ class EpubReader(Gtk.ApplicationWindow):
     
     def on_reload(self, *args):
         self.view.reload()
+    
+    def on_toc(self, *args):
+        self.view.execute_script('reader.showTOC();')
     
     def on_key_press(self, widget, event):
         # Check that none of Shift, Control, Alt are pressed
@@ -145,12 +168,8 @@ class EpubReader(Gtk.ApplicationWindow):
     def on_title_changed(self, web_view, frame, title):
         self.set_title(title)
     
-    def on_navigation_policy_decision_requested(self, web_view, frame, request, navigation, policy_decision):
-        if request.get_uri() == 'settings://':
-            policy_decision.ignore()
-            self.on_settings()
-            return True
-        return False
+    def set_title(self, title):
+        self.hb.set_title(title)
     
     def on_console_message(self, web_view, message, line, source_id):
         if message == 'Ready':

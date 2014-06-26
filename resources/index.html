@@ -8,34 +8,14 @@
 <script src=".js/monoctrl.js"></script>
 <script src=".bookdata.js"></script>
 <script>
-function createTopControls(reader, contactListeners) {
-    var tc = {}
-    tc.createControlElements = function () {
-        var hoverRegion = $('<div class="hoverTop"></div>'),
-            panel = $('<div class="panelTop"></div>'),
-            contents = $('<span class="contents">TOC</span>'),
-            page = $('<span class="pageCount">&nbsp;</span>'),
-            settings = $('<span class="settings"><a href="settings://"><img src=".application-menu" alt="Settings" width="20" height="20" /></a></span>');
-        
-        panel.append(contents).append(page).append(settings);
-        hoverRegion.append(panel);
-        
-        Monocle.Events.listenForContact(panel[0], {start: function(event) { event.stopPropagation(); } });
-        if (contactListeners) {
-            Monocle.Events.listenForContact(contents[0], contactListeners);
-        }
-        return hoverRegion[0];
-    }
-    reader.addControl(tc, 'page');
-    return tc;
-}
-
 function setupReader(reader) {
     var stencil = new Monocle.Controls.Stencil(reader);
     reader.addControl(stencil);
     var toc = new Monocle.Controls.Contents(reader);
     reader.addControl(toc, 'popover', {hidden: true});
-    createTopControls(reader, {start: function () { reader.showControl(toc); } });
+    reader.showTOC = function () {
+        reader.showControl(toc);
+    };
     
     console.log('Ready');
 }
